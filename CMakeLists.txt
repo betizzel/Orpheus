@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.10)
-project(orpheus VERSION 1.0 LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.16)
+project(orpheus VERSION 1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,13 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
 
 option(ENABLE_TESTS "Enable unit tests" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_SANITIZERS "Enable sanitizers for debugging" OFF)
-option(ENABLE_FFMPEG "Enable FFmpeg for AAC/ALAC/M4A support" OFF)
+# AUTO: use FFmpeg when it is installed. ON forces it (hard error when missing),
+# OFF builds a cut-down player that only decodes mp3/flac/wav.
+set(ENABLE_FFMPEG "AUTO" CACHE STRING "FFmpeg decoding backend for M4A/AAC/ALAC/Opus/OGG (AUTO|ON|OFF)")
+set_property(CACHE ENABLE_FFMPEG PROPERTY STRINGS AUTO ON OFF)
 
 if(APPLE)
     list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/ncurses")
@@ -22,46 +25,80 @@ endif()
 
 # Find dependencies
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(NCURSES REQUIRED IMPORTED_TARGET ncursesw)
+pkg_check_modules(NCURSES IMPORTED_TARGET ncursesw)
 if(NOT NCURSES_FOUND)
     pkg_check_modules(NCURSES REQUIRED IMPORTED_TARGET ncurses)
 endif()
 pkg_check_modules(TAGLIB REQUIRED IMPORTED_TARGET taglib)
-pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua)
+pkg_check_modules(LUA IMPORTED_TARGET lua)
+if(NOT LUA_FOUND)
+    pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua5.4 lua-5.4 lua5.3 lua-5.3)
+endif()
 
-# Optional FFmpeg for AAC/ALAC/M4A
-#if(ENABLE_FFMPEG)
-#    pkg_check_modules(AVCODEC REQUIRED libavcodec)
-#    pkg_check_modules(AVFORMAT REQUIRED libavformat)
-#    pkg_check_modules(AVUTIL REQUIRED libavutil)
-#    add_compile_definitions(ORPHEUS_FFMPEG)
-#endif()
+# Optional FFmpeg for AAC/ALAC/M4A/Opus/OGG/WMA
+set(ORPHEUS_HAVE_FFMPEG OFF)
+if(NOT ENABLE_FFMPEG STREQUAL "OFF")
+    if(ENABLE_FFMPEG STREQUAL "ON")
+        pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavformat libavutil libswresample)
+    else()
+        pkg_check_modules(FFMPEG IMPORTED_TARGET libavcodec libavformat libavutil libswresample)
+    endif()
+    if(FFMPEG_FOUND)
+        set(ORPHEUS_HAVE_FFMPEG ON)
+    endif()
+endif()
 
-# Source files
-set(SOURCES
-    src/main.cpp
-    src/ui/ui.cpp
+# Sources shared by the player and the server.
+set(CORE_SOURCES
+    src/library/library.cpp
+    src/net/proto.cpp
     src/ui/art.cpp
-    src/ui/visualizer.cpp
-    src/player/player.cpp
     src/util/log.cpp
     src/util/util.cpp
+)
+
+add_library(orpheus_core STATIC ${CORE_SOURCES})
+target_include_directories(orpheus_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(orpheus_core PUBLIC PkgConfig::TAGLIB)
+
+# The TUI client. Decodes and plays; audio always comes out here.
+set(CLIENT_SOURCES
+    src/main.cpp
+    src/ui/ui.cpp
+    src/ui/visualizer.cpp
+    src/net/remote.cpp
+    src/net/source.cpp
+    src/player/player.cpp
+    src/player/ffdecoder.cpp
+    src/util/config.cpp
+    src/util/playlist.cpp
     src/util/miniaudio.c
 )
 
-add_executable(orpheus ${SOURCES})
-
-# Include directories
-target_include_directories(orpheus PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-# Link libraries
+add_executable(orpheus ${CLIENT_SOURCES})
 target_link_libraries(orpheus PRIVATE
+    orpheus_core
     PkgConfig::NCURSES
     PkgConfig::LUA
-    PkgConfig::TAGLIB
 )
+
+# The library server. Never decodes, never plays: no miniaudio, no ncurses.
+add_executable(orpheusd
+    src/orpheusd.cpp
+    src/net/server.cpp
+)
+target_link_libraries(orpheusd PRIVATE orpheus_core)
+
+find_package(Threads REQUIRED)
+target_link_libraries(orpheus_core PUBLIC Threads::Threads)
+
+if(ORPHEUS_HAVE_FFMPEG)
+    target_compile_definitions(orpheus_core PUBLIC ORPHEUS_FFMPEG)
+    target_link_libraries(orpheus PRIVATE PkgConfig::FFMPEG)
+    message(STATUS "Orpheus: FFmpeg decoding backend ENABLED (m4a/aac/alac/opus/ogg/wma)")
+else()
+    message(STATUS "Orpheus: FFmpeg decoding backend DISABLED (mp3/flac/wav only)")
+endif()
 
 if(APPLE)
     target_link_libraries(orpheus PRIVATE
@@ -72,25 +109,19 @@ if(APPLE)
     target_link_libraries(orpheus PRIVATE pthread m)
 endif()
 
-if(ENABLE_FFMPEG)
-    target_include_directories(orpheus PRIVATE
-        ${AVCODEC_INCLUDE_DIRS}
-        ${AVFORMAT_INCLUDE_DIRS}
-        ${AVUTIL_INCLUDE_DIRS}
-    )
-    target_link_libraries(orpheus PRIVATE
-        ${AVCODEC_LIBRARIES}
-        ${AVFORMAT_LIBRARIES}
-        ${AVUTIL_LIBRARIES}
-    )
-endif()
+foreach(tgt orpheus orpheusd orpheus_core)
+    target_compile_options(${tgt} PRIVATE -Wall -Wextra -Wpedantic)
+endforeach()
 
-target_compile_options(orpheus PRIVATE -Wall -Wextra -Wpedantic)
-set_target_properties(orpheus PROPERTIES
+# miniaudio.c and the bundled stb headers are vendored: their warnings are not
+# actionable and would drown out ours.
+set_source_files_properties(src/util/miniaudio.c PROPERTIES COMPILE_OPTIONS "-w")
+
+set_target_properties(orpheus orpheusd PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
-install(TARGETS orpheus DESTINATION bin)
+install(TARGETS orpheus orpheusd DESTINATION bin)
 
 if(ENABLE_TESTS)
     enable_testing()

@@ -1,104 +1,118 @@
-// player.hpp
 #pragma once
 #include "art.hpp"
 #include "miniaudio.h"
 #include "ringbuffer.hpp"
 #include <atomic>
 #include <memory>
+#include <random>
 #include <string>
-#include <taglib/fileref.h>
 #include <vector>
 
 struct SongMetadata
 {
   std::string song_name;
   std::string artist_name;
+  std::string album_name;
   std::string song_path;
   std::string album_image_path;
+  int track_number = 0;
+  int duration_seconds = 0;
   Art::ImageData cached_image;
 };
 
+enum class RepeatMode { Off, All, One };
+
 // Custom ma_node that copies incoming audio frames into a RingBuffer.
-// ma_node_base must be the first member it's what lets miniaudio
-// treat a TapNode* as a ma_node* (C-style inheritance).
 struct TapNode
 {
   ma_node_base base;
-  RingBuffer *ring = nullptr;             // raw pointer; owned by PlayerData
-  std::atomic<uint64_t> frames_written{0}; // audio thread increments this
+  RingBuffer *ring = nullptr;
+  std::atomic<uint64_t> frames_written{0};
 };
 
 struct PlayerData
 {
-  ma_engine engine;
-  ma_sound sound;
+  ma_resource_manager resource_manager{};
+  bool resource_manager_initialized = false;
+  ma_engine engine{};
+  bool engine_initialized = false;
+  ma_sound sound{};
   bool sound_is_initialized = false;
-
-  // EQ visualizer
-  TapNode tap;                              // sits in the main audio path
+  TapNode tap;
   std::unique_ptr<RingBuffer> tap_ring;
   bool visualizer_initialized = false;
 };
+
+extern "C" void miniaudio_on_song_end(void *user_data, ma_sound *sound);
 
 class MiniAudioPlayer
 {
 public:
   MiniAudioPlayer();
   ~MiniAudioPlayer();
-
-  void init();
+  /// @param vfs optional miniaudio VFS; null uses the default (local files).
+  bool init(ma_vfs *vfs = nullptr);
   void cleanup();
 
-  // Legacy | play a single song by direct path (clears queue)
-  bool startSong(const std::string& song_path);
+  void queueSong(SongMetadata song);
+  void queueSongNext(SongMetadata song);
+  void queueSongs(std::vector<SongMetadata> songs);
+  void replaceQueue(std::vector<SongMetadata> songs, int start_index = 0);
+  bool removeAt(int index);
+  bool moveItem(int from, int to);
+  void clearQueue();
 
-  // Queue-based music playing
-  void queueSong(const SongMetadata& song);           // add to end of queue
-  void queueSongFirst(const SongMetadata& song);      // insert at beginning (play next)
-  bool playCurrent();                                 // load & play current_index + 1; false if empty/overflow
-  bool nextSong();                                    // stop current, advance index, play next
-  bool prevSong();                                    // restart or go back to previous in queue
-  void clearQueue();                                  // stop playing, reset everything
-  int getCurrentIndex() const { return current_index; }
-  size_t getQueueSize() const { return song_queue.size(); }
-  bool isEmpty() const        { return song_queue.empty(); }
-
+  bool playIndex(int index);
+  bool nextSong();
+  bool prevSong();
   bool pauseSong();
+  bool isPlaying() const;
   bool rewind();
+  bool seekRelative(int seconds);
+  bool seekToPercent(int percent);
+  void tick();
 
-  // Called from ui.cpp event loop: returns true when song has ended (for auto-advance)
-  bool isCurrentEnded();
-  void resetEndFlag();
+  void setVolume(float v);
+  float getVolume() const;
+  void adjustVolume(float delta);
 
-  // Called from audio thread by miniaudio callback
-  void onSongEnd();
+  RepeatMode getRepeat() const;
+  void cycleRepeat();
+  bool isShuffle() const;
+  void toggleShuffle();
 
-  // Direct check using ma_sound_at_end (fallback if callback missed)
-  bool isAtEnd() const;
+  int getCurrentIndex() const;
+  size_t getQueueSize() const;
+  bool isEmpty() const;
+  const SongMetadata *getCurrentSong() const;
+  const SongMetadata *getQueueSong(size_t index) const;
+  const std::vector<SongMetadata> &getQueue() const;
 
-  // Accessors for UI display
-  const SongMetadata* getCurrentSong() const;
-  std::string getCurrentSongPath() const;
-  const SongMetadata* getQueueSong(unsigned int index) const;
-
-  // Progress / timing (seconds)
   int getCurrentPositionSeconds() const;
   int getSongLengthSeconds() const;
   int getProgressPercent() const;
+  RingBuffer *getRingBuffer();
+  ma_uint32 getSampleRate() const;
 
-  // EQ / Visualizer functions
-  bool initVisualizerAudio();
-  RingBuffer* getRingBuffer() { return audio_state.tap_ring.get(); }
-  uint64_t getTapFramesWritten() const { return audio_state.tap.frames_written.load(); }
-  ma_uint32 getSampleRate() const { return ma_engine_get_sample_rate(&audio_state.engine); }
 
 private:
   PlayerData audio_state;
-  int current_index = -1;                // index into song_queue of what's playing
-  int song_length_pcm = 0;               // cached length in pcm frames for comparison
-  std::atomic<bool> just_ended{false};   // true for one frame after song ends
-  std::vector<SongMetadata> song_queue;  // playlist
+  int current_index = -1;
+  std::atomic<bool> just_ended{false};
+  std::vector<SongMetadata> song_queue;
+  std::vector<int> shuffle_order;
+  RepeatMode repeat_mode = RepeatMode::Off;
+  bool shuffle = false;
+  float volume = 1.0f;
+  std::mt19937 random_engine{std::random_device{}()};
 
-  void stopCurrent();
-  bool loadSong(const std::string& path);
+  void stopCurrent(bool preserve_index = true);
+  bool loadSong(const std::string &path);
+  void rebuildShuffle(int preferred_index = -1);
+  void onSongEnd();
+  friend void miniaudio_on_song_end(void *user_data, ma_sound *sound);
+  int orderedPosition(int index) const;
+  int orderedIndex(int position) const;
+  bool playNextOrdered(bool wrap);
+  bool initVisualizerAudio();
 };

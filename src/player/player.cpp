@@ -1,472 +1,550 @@
-// player.cpp
 #include "player.hpp"
-#include "miniaudio.h"
+#include "ffdecoder.hpp"
 #include "util.hpp"
-#include "ringbuffer.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
-/* Custom tap node (audio passes through)
-* Sits in the main audio path between the sound and the endpoint.
-* Copies audio straight through to the output while also pushing a
-* mono copy into the RingBuffer for the UI thread to FFT.
-* this is running on the audio thread so it has to be fast
-* */
-static void tap_process(ma_node *pNode, const float **ppFramesIn,
-                        ma_uint32 *pFrameCountIn, float **ppFramesOut,
-                        ma_uint32 *pFrameCountOut)
+namespace
 {
-  TapNode *tap = reinterpret_cast<TapNode *>(pNode);
-  const float *in = ppFramesIn[0];
-  float *out = ppFramesOut[0];
-  ma_uint32 frames = *pFrameCountIn;
-  ma_uint32 channels = ma_node_get_input_channels(pNode, 0);
+static void tap_process(ma_node *node, const float **inputs, ma_uint32 *input_frames,
+                        float **outputs, ma_uint32 *output_frames)
+{
+  auto *tap = reinterpret_cast<TapNode *>(node);
+  const float *input = inputs[0];
+  float *output = outputs[0];
+  const ma_uint32 frames = *input_frames;
+  const ma_uint32 channels = ma_node_get_input_channels(node, 0);
+  if (input != nullptr && output != nullptr && frames > 0)
+    std::memcpy(output, input, static_cast<size_t>(frames) * channels * sizeof(float));
 
-  // Pass-through first: audio must reach the speakers.
-  if (in && out && frames > 0)
-  {
-    std::memcpy(out, in, frames * channels * sizeof(float));
-  }
-
-  // No tasks that have extra processing time. e.g. malloc, logging, locks...
-  if (tap && tap->ring && frames > 0)
+  if (tap != nullptr && tap->ring != nullptr && input != nullptr && frames > 0)
   {
     if (channels == 1)
-    {
-      tap->ring->write(in, frames);
-    }
+      tap->ring->write(input, frames);
     else if (channels == 2)
     {
-      // Mix stereo -> mono in stack chunks to avoid dropping samples when
-      // miniaudio delivers more than 512 frames at once.
       float mono[512];
-      ma_uint32 written = 0;
-      while (written < frames)
+      ma_uint32 offset = 0;
+      while (offset < frames)
       {
-        ma_uint32 chunk = frames - written;
-        if (chunk > 512)
-          chunk = 512;
-        for (ma_uint32 i = 0; i < chunk; ++i)
-        {
-          mono[i] = (in[(written + i) * 2 + 0] + in[(written + i) * 2 + 1]) * 0.5f;
-        }
-        tap->ring->write(mono, chunk);
-        written += chunk;
+        const ma_uint32 count = std::min<ma_uint32>(frames - offset, 512);
+        for (ma_uint32 i = 0; i < count; ++i)
+          mono[i] = (input[(offset + i) * 2] + input[(offset + i) * 2 + 1]) * 0.5F;
+        tap->ring->write(mono, count);
+        offset += count;
       }
     }
-    // other channel counts: just drop
     tap->frames_written.fetch_add(frames, std::memory_order_relaxed);
   }
-
-  *pFrameCountOut = frames;
+  *output_frames = frames;
 }
 
 static ma_node_vtable g_tap_vtable =
 {
   tap_process,
-  nullptr,    // onGetRequiredInputFrameCount (optional)
-  1,          // 1 input bus
-  1,          // 1 output bus
-  0           // no flags: this is a normal passthrough node
+  nullptr,
+  1,
+  1,
+  0
 };
+}
 
-extern "C" void miniaudio_on_song_end(void *user_data, ma_sound *pSound)
+extern "C" void miniaudio_on_song_end(void *user_data, ma_sound *)
 {
-  (void)pSound;
-  if (!user_data)
-    return;
-  static_cast<MiniAudioPlayer *>(user_data)->onSongEnd();
+  if (user_data != nullptr)
+    static_cast<MiniAudioPlayer *>(user_data)->onSongEnd();
 }
 
 MiniAudioPlayer::MiniAudioPlayer() = default;
+
 MiniAudioPlayer::~MiniAudioPlayer()
 {
   cleanup();
 }
 
-void MiniAudioPlayer::init()
+bool MiniAudioPlayer::init(ma_vfs *vfs)
 {
-  ma_result result = ma_engine_init(NULL, &audio_state.engine);
+  if (audio_state.engine_initialized)
+    return true;
+  FFDecoder::quietLogging();
+  ma_decoding_backend_vtable *custom_vtables[1] = {FFDecoder::vtable()};
+  ma_resource_manager_config resource_config = ma_resource_manager_config_init();
+  resource_config.ppCustomDecodingBackendVTables = custom_vtables;
+  resource_config.customDecodingBackendCount = custom_vtables[0] == nullptr ? 0 : 1;
+  // A non-null VFS routes every file open through the caller's provider. The
+  // remote VFS passes local paths to a default VFS, so this stays correct
+  // even when a queue mixes local and remote tracks.
+  resource_config.pVFS = vfs;
+  ma_result result = ma_resource_manager_init(&resource_config, &audio_state.resource_manager);
+  if (result != MA_SUCCESS)
+  {
+    Util::errorPrint("init resource manager failed: " + std::string(ma_result_description(result)));
+    return false;
+  }
+  audio_state.resource_manager_initialized = true;
+
+  ma_engine_config engine_config = ma_engine_config_init();
+  engine_config.pResourceManager = &audio_state.resource_manager;
+  result = ma_engine_init(&engine_config, &audio_state.engine);
   if (result != MA_SUCCESS)
   {
     Util::errorPrint("init miniaudio failed: " + std::string(ma_result_description(result)));
-    return;
+    ma_resource_manager_uninit(&audio_state.resource_manager);
+    audio_state.resource_manager_initialized = false;
+    return false;
   }
-  // start visualizer tap node (lives for life of engine)
+  audio_state.engine_initialized = true;
   if (!initVisualizerAudio())
   {
-    // for now we'll exit early on fail (should succeed every time)
     Util::errorPrint("initVisualizerAudio failed");
-    return;
+    cleanup();
+    return false;
   }
+  ma_engine_set_volume(&audio_state.engine, volume);
+  return true;
 }
 
 void MiniAudioPlayer::onSongEnd()
 {
-  just_ended = true;
+  just_ended.store(true, std::memory_order_release);
 }
 
 void MiniAudioPlayer::cleanup()
 {
-  if (current_index >= 0)
-    stopCurrent();
-
+  stopCurrent();
   song_queue.clear();
-
-  // Tear down visualizer nodes before the engine so the audio thread
-  // can't call tap_process after the ring buffer is gone.
+  shuffle_order.clear();
+  current_index = -1;
   if (audio_state.visualizer_initialized)
   {
-    ma_node_uninit(&audio_state.tap.base, NULL);
+    ma_node_uninit(&audio_state.tap.base, nullptr);
     audio_state.visualizer_initialized = false;
+    audio_state.tap.ring = nullptr;
   }
-
-  ma_engine_uninit(&audio_state.engine);
+  audio_state.tap_ring.reset();
+  if (audio_state.engine_initialized)
+  {
+    ma_engine_uninit(&audio_state.engine);
+    audio_state.engine_initialized = false;
+  }
+  if (audio_state.resource_manager_initialized)
+  {
+    ma_resource_manager_uninit(&audio_state.resource_manager);
+    audio_state.resource_manager_initialized = false;
+  }
+  just_ended.store(false, std::memory_order_release);
 }
 
 bool MiniAudioPlayer::loadSong(const std::string &path)
 {
-  // don't attach to the default endpoint; we'll route sound -> tap -> endpoint
-  ma_result result = ma_sound_init_from_file(&audio_state.engine, path.c_str(), MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT, NULL, NULL, &audio_state.sound);
+  if (!audio_state.engine_initialized || !audio_state.visualizer_initialized)
+    return false;
+  const ma_result result = ma_sound_init_from_file(&audio_state.engine, path.c_str(),
+                                                    MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT, nullptr, nullptr,
+                                                    &audio_state.sound);
   if (result != MA_SUCCESS)
   {
     Util::errorPrint("Failed to load song: " + std::string(ma_result_description(result)));
     return false;
   }
-  // attach sound to the TAP node (which then passes through to the endpoint)
-  result = ma_node_attach_output_bus(&audio_state.sound, 0, &audio_state.tap.base, 0);
-  if (result != MA_SUCCESS)
+  audio_state.sound_is_initialized = true;
+  if (ma_node_attach_output_bus(&audio_state.sound, 0, &audio_state.tap.base, 0) != MA_SUCCESS)
   {
-    Util::errorPrint("Failed to attach audio to tap: " + std::string(ma_result_description(result)));
+    ma_sound_uninit(&audio_state.sound);
+    audio_state.sound_is_initialized = false;
+    Util::errorPrint("Failed to attach audio to visualizer");
     return false;
   }
-
-  // Make sure no stale FFT history leaks between songs.
-  if (audio_state.tap_ring)
+  if (audio_state.tap_ring != nullptr)
     audio_state.tap_ring->clear();
-
-  audio_state.sound_is_initialized = true;
-
-  // Register end callback — audio thread sets just_ended when done
+  just_ended.store(false, std::memory_order_release);
+  ma_sound_set_volume(&audio_state.sound, volume);
   ma_sound_set_end_callback(&audio_state.sound, miniaudio_on_song_end, this);
-
-  // Cache length
-  ma_uint64 len;
-  if (ma_sound_get_length_in_pcm_frames(&audio_state.sound, &len) == MA_SUCCESS)
-  {
-    song_length_pcm = (int)len;
-  }
-  else
-  {
-    song_length_pcm = 0;
-  }
-
   return true;
 }
 
-void MiniAudioPlayer::stopCurrent()
+void MiniAudioPlayer::stopCurrent(bool preserve_index)
 {
-
   if (audio_state.sound_is_initialized)
   {
     ma_sound_stop(&audio_state.sound);
     ma_sound_uninit(&audio_state.sound);
     audio_state.sound_is_initialized = false;
+  }
+  just_ended.store(false, std::memory_order_release);
+  if (!preserve_index)
     current_index = -1;
-  }
 }
 
-bool MiniAudioPlayer::isCurrentEnded()
+void MiniAudioPlayer::rebuildShuffle(int preferred_index)
 {
-  if (just_ended)
+  shuffle_order.resize(song_queue.size());
+  for (size_t i = 0; i < song_queue.size(); ++i)
+    shuffle_order[i] = static_cast<int>(i);
+  if (shuffle)
+    std::shuffle(shuffle_order.begin(), shuffle_order.end(), random_engine);
+  if (preferred_index >= 0 && preferred_index < static_cast<int>(song_queue.size()))
   {
-    just_ended = false;
-    return true;
+    const auto it = std::find(shuffle_order.begin(), shuffle_order.end(), preferred_index);
+    if (it != shuffle_order.end() && it != shuffle_order.begin())
+      std::iter_swap(shuffle_order.begin(), it);
   }
-  return false;
 }
 
-bool MiniAudioPlayer::isAtEnd() const
+int MiniAudioPlayer::orderedPosition(int index) const
 {
-  if (!audio_state.sound_is_initialized)
+  const auto it = std::find(shuffle_order.begin(), shuffle_order.end(), index);
+  return it == shuffle_order.end() ? -1 : static_cast<int>(it - shuffle_order.begin());
+}
+
+int MiniAudioPlayer::orderedIndex(int position) const
+{
+  return position >= 0 && position < static_cast<int>(shuffle_order.size()) ? shuffle_order[position] : -1;
+}
+
+bool MiniAudioPlayer::playIndex(int index)
+{
+  if (index < 0 || index >= static_cast<int>(song_queue.size()) || !audio_state.engine_initialized)
     return false;
-  return ma_sound_at_end(&audio_state.sound) != 0;
-}
-
-bool MiniAudioPlayer::startSong(const std::string &song_path)
-{
   stopCurrent();
-
-  song_queue.clear();
-  current_index = -1;
-
-  if (!loadSong(song_path))
+  current_index = index;
+  if (!loadSong(song_queue[index].song_path))
+    return false;
+  if (ma_sound_start(&audio_state.sound) != MA_SUCCESS)
   {
-    Util::errorPrint("Couldn't load song :(");
+    stopCurrent();
     return false;
   }
-  Util::debugPrint("Loaded song successfully!");
-
-  ma_result result = ma_sound_start(&audio_state.sound);
-  if (result != MA_SUCCESS)
-  {
-    Util::debugPrint("Couldn't play song: " + std::string(ma_result_description(result)));
-    return false;
-  }
-
-  current_index = 0;
   return true;
 }
 
-void MiniAudioPlayer::queueSong(const SongMetadata &song)
+void MiniAudioPlayer::queueSong(SongMetadata song)
 {
-  song_queue.push_back(song);
+  song_queue.push_back(std::move(song));
+  rebuildShuffle(current_index);
 }
 
-void MiniAudioPlayer::queueSongFirst(const SongMetadata &song)
+void MiniAudioPlayer::queueSongNext(SongMetadata song)
 {
-  song_queue.insert(song_queue.begin(), song);
+  const int insertion = current_index >= 0 ? current_index + 1 : static_cast<int>(song_queue.size());
+  song_queue.insert(song_queue.begin() + insertion, std::move(song));
+  if (current_index >= insertion)
+    ++current_index;
+  rebuildShuffle(current_index);
 }
 
-bool MiniAudioPlayer::playCurrent()
+void MiniAudioPlayer::queueSongs(std::vector<SongMetadata> songs)
 {
+  for (auto &song : songs)
+    song_queue.push_back(std::move(song));
+  rebuildShuffle(current_index);
+}
+
+void MiniAudioPlayer::replaceQueue(std::vector<SongMetadata> songs, int start_index)
+{
+  stopCurrent(false);
+  song_queue = std::move(songs);
+  rebuildShuffle(-1);
+  if (!song_queue.empty())
+  {
+    start_index = std::clamp(start_index, 0, static_cast<int>(song_queue.size()) - 1);
+    if (!playIndex(start_index))
+      playNextOrdered(false); // requested track won't decode: take the next one
+  }
+}
+
+bool MiniAudioPlayer::removeAt(int index)
+{
+  if (index < 0 || index >= static_cast<int>(song_queue.size()))
+    return false;
+  const bool removing_current = index == current_index;
+  if (removing_current)
+    stopCurrent(false);
+  song_queue.erase(song_queue.begin() + index);
+  if (!removing_current && index < current_index)
+    --current_index;
   if (song_queue.empty())
-  {
-    return false;
-  }
-
-  current_index++;
-  if (current_index < 0 || current_index >= (int)song_queue.size())
-  {
-    current_index--;
-    return false;
-  }
-
-  const auto &cur = song_queue[current_index];
-  if (!loadSong(cur.song_path))
-  {
-    Util::errorPrint("Couldn't load song from queue :(");
-    current_index--;
-    return false;
-  }
-
-  ma_result result = ma_sound_start(&audio_state.sound);
-  if (result != MA_SUCCESS)
-  {
-    Util::debugPrint("Couldn't play song: " + std::string(ma_result_description(result)));
-    return false;
-  }
-
+    current_index = -1;
+  rebuildShuffle(current_index);
   return true;
 }
 
-bool MiniAudioPlayer::nextSong()
+bool MiniAudioPlayer::moveItem(int from, int to)
 {
-  if (current_index >= 0)
-  {
-    if (audio_state.sound_is_initialized)
-    {
-      ma_sound_stop(&audio_state.sound);
-      ma_sound_uninit(&audio_state.sound);
-      audio_state.sound_is_initialized = false;
-    }
-  }
-
-  return playCurrent();
-}
-
-bool MiniAudioPlayer::prevSong()
-{
-  if (current_index == -1)
-  {
-    // nothing is playing
+  if (from < 0 || to < 0 || from >= static_cast<int>(song_queue.size()) || to >= static_cast<int>(song_queue.size()))
     return false;
-  }
-
-  if (current_index >= 0)
-  {
-    if (audio_state.sound_is_initialized)
-    {
-      ma_sound_stop(&audio_state.sound);
-      ma_sound_uninit(&audio_state.sound);
-      memset(&audio_state.sound, 0, sizeof(audio_state.sound));
-      audio_state.sound_is_initialized = false;
-    }
-
-    // play_Current adds to the index by 1
-    // if the index is < 1, we dont keep on subtracting (playCurrent isn't called)
-    current_index--;
-    if (current_index < 0)
-    {
-      current_index = -1;
-      return false;
-    }
-    current_index--;
-
-    return playCurrent();
-  }
-
-  return false;
+  if (from == to)
+    return true;
+  auto item = std::move(song_queue[from]);
+  song_queue.erase(song_queue.begin() + from);
+  song_queue.insert(song_queue.begin() + to, std::move(item));
+  if (current_index == from)
+    current_index = to;
+  else if (from < current_index && to >= current_index)
+    --current_index;
+  else if (from > current_index && to <= current_index)
+    ++current_index;
+  rebuildShuffle(current_index);
+  return true;
 }
 
 void MiniAudioPlayer::clearQueue()
 {
-  if (current_index >= 0)
-  {
-    if (audio_state.sound_is_initialized)
-    {
-      ma_sound_stop(&audio_state.sound);
-      ma_sound_uninit(&audio_state.sound);
-      memset(&audio_state.sound, 0, sizeof(audio_state.sound));
-      audio_state.sound_is_initialized = false;
-    }
-    current_index = -1;
-  }
+  stopCurrent(false);
   song_queue.clear();
+  shuffle_order.clear();
+}
+
+bool MiniAudioPlayer::playNextOrdered(bool wrap)
+{
+  if (song_queue.empty())
+    return false;
+
+  const int count = static_cast<int>(shuffle_order.size());
+  int position = current_index < 0 ? -1 : orderedPosition(current_index);
+
+  // A file that fails to decode (wrong codec, video-only container, deleted
+  // underneath us) must not stall the queue: walk forward until something
+  // plays, at most once around.
+  for (int attempts = 0; attempts < count; ++attempts)
+  {
+    int next_position = position + 1;
+    if (next_position >= count)
+    {
+      if (!wrap)
+        return false;
+      next_position = 0;
+    }
+    if (playIndex(orderedIndex(next_position)))
+      return true;
+    position = next_position;
+  }
+  return false;
+}
+
+bool MiniAudioPlayer::nextSong()
+{
+  const bool wrap = repeat_mode == RepeatMode::All;
+  return playNextOrdered(wrap);
+}
+
+bool MiniAudioPlayer::prevSong()
+{
+  if (current_index < 0)
+    return false;
+  if (!audio_state.sound_is_initialized)
+    return playIndex(current_index);
+
+  // "Restart the track" only makes sense mid-playback. Sitting on the last
+  // frame after the queue drained, '[' should step back a track instead.
+  float position = 0.0F;
+  const bool at_end = ma_sound_at_end(&audio_state.sound) == MA_TRUE;
+  if (!at_end && ma_sound_get_cursor_in_seconds(&audio_state.sound, &position) == MA_SUCCESS && position > 3.0F)
+    return rewind();
+
+  const int current_position = orderedPosition(current_index);
+  if (current_position <= 0)
+    return rewind();
+  return playIndex(orderedIndex(current_position - 1));
 }
 
 bool MiniAudioPlayer::pauseSong()
 {
-  if (current_index < 0)
-  {
+  if (!audio_state.sound_is_initialized)
     return false;
-  }
-
-  ma_bool32 isPlaying = ma_sound_is_playing(&audio_state.sound);
-
-  if (isPlaying == MA_TRUE)
-  {
+  if (ma_sound_is_playing(&audio_state.sound) == MA_TRUE)
     return ma_sound_stop(&audio_state.sound) == MA_SUCCESS;
-  }
-  else
-  {
-    return ma_sound_start(&audio_state.sound) == MA_SUCCESS;
-  }
+  if (ma_sound_at_end(&audio_state.sound) == MA_TRUE && ma_sound_seek_to_pcm_frame(&audio_state.sound, 0) != MA_SUCCESS)
+    return false;
+  return ma_sound_start(&audio_state.sound) == MA_SUCCESS;
+}
+
+bool MiniAudioPlayer::isPlaying() const
+{
+  return audio_state.sound_is_initialized && ma_sound_is_playing(&audio_state.sound) == MA_TRUE;
 }
 
 bool MiniAudioPlayer::rewind()
 {
-  if (current_index < 0)
-  {
-    Util::errorPrint("No song loaded");
-    return false;
-  }
+  return audio_state.sound_is_initialized && ma_sound_seek_to_pcm_frame(&audio_state.sound, 0) == MA_SUCCESS;
+}
 
-  return ma_sound_seek_to_pcm_frame(&audio_state.sound, 0) == MA_SUCCESS;
+bool MiniAudioPlayer::seekRelative(int seconds)
+{
+  if (!audio_state.sound_is_initialized)
+    return false;
+  float position = 0.0F;
+  float length = 0.0F;
+  if (ma_sound_get_cursor_in_seconds(&audio_state.sound, &position) != MA_SUCCESS ||
+      ma_sound_get_length_in_seconds(&audio_state.sound, &length) != MA_SUCCESS)
+    return false;
+  const float target = std::clamp(position + static_cast<float>(seconds), 0.0F, std::max(0.0F, length));
+  // seek_to_second converts with the DATA SOURCE's rate. Multiplying by the
+  // engine rate and calling seek_to_pcm_frame lands in the wrong place for
+  // any file whose rate differs from the device (e.g. 44.1k file, 48k device).
+  return ma_sound_seek_to_second(&audio_state.sound, target) == MA_SUCCESS;
+}
+
+bool MiniAudioPlayer::seekToPercent(int percent)
+{
+  if (!audio_state.sound_is_initialized)
+    return false;
+  float length = 0.0F;
+  if (ma_sound_get_length_in_seconds(&audio_state.sound, &length) != MA_SUCCESS)
+    return false;
+  const int clamped = std::clamp(percent, 0, 100);
+  return ma_sound_seek_to_second(&audio_state.sound, length * static_cast<float>(clamped) / 100.0F) == MA_SUCCESS;
+}
+
+void MiniAudioPlayer::tick()
+{
+  if (!just_ended.exchange(false, std::memory_order_acq_rel))
+    return;
+  if (repeat_mode == RepeatMode::One)
+  {
+    if (playIndex(current_index))
+      return;
+    // The track we were repeating stopped decoding; don't wedge on it.
+  }
+  if (!nextSong())
+  {
+    // End of queue with repeat off. Stop, but keep the sound loaded: tearing
+    // it down here left every transport control dead (play, prev and seek all
+    // bail on !sound_is_initialized) with the last track still on screen.
+    if (audio_state.sound_is_initialized)
+      ma_sound_stop(&audio_state.sound);
+  }
+}
+
+void MiniAudioPlayer::setVolume(float value)
+{
+  volume = std::clamp(value, 0.0F, 1.0F);
+  if (audio_state.sound_is_initialized)
+    ma_sound_set_volume(&audio_state.sound, volume);
+}
+
+float MiniAudioPlayer::getVolume() const
+{
+  return volume;
+}
+
+void MiniAudioPlayer::adjustVolume(float delta)
+{
+  setVolume(volume + delta);
+}
+
+RepeatMode MiniAudioPlayer::getRepeat() const
+{
+  return repeat_mode;
+}
+
+void MiniAudioPlayer::cycleRepeat()
+{
+  if (repeat_mode == RepeatMode::Off)
+    repeat_mode = RepeatMode::All;
+  else if (repeat_mode == RepeatMode::All)
+    repeat_mode = RepeatMode::One;
+  else
+    repeat_mode = RepeatMode::Off;
+}
+
+bool MiniAudioPlayer::isShuffle() const
+{
+  return shuffle;
+}
+
+void MiniAudioPlayer::toggleShuffle()
+{
+  shuffle = !shuffle;
+  rebuildShuffle(current_index);
+}
+
+int MiniAudioPlayer::getCurrentIndex() const
+{
+  return current_index;
+}
+
+size_t MiniAudioPlayer::getQueueSize() const
+{
+  return song_queue.size();
+}
+
+bool MiniAudioPlayer::isEmpty() const
+{
+  return song_queue.empty();
 }
 
 const SongMetadata *MiniAudioPlayer::getCurrentSong() const
 {
-  if (current_index < 0 || current_index >= (int)song_queue.size())
-  {
-    return nullptr;
-  }
-
-  return &song_queue[current_index];
+  return current_index >= 0 && current_index < static_cast<int>(song_queue.size()) ? &song_queue[current_index] : nullptr;
 }
 
-std::string MiniAudioPlayer::getCurrentSongPath() const
+const SongMetadata *MiniAudioPlayer::getQueueSong(size_t index) const
 {
-  auto *song = getCurrentSong();
-  if (!song)
-    return "";
-  return song->song_path;
+  return index < song_queue.size() ? &song_queue[index] : nullptr;
 }
 
-const SongMetadata *MiniAudioPlayer::getQueueSong(unsigned int index) const
+const std::vector<SongMetadata> &MiniAudioPlayer::getQueue() const
 {
-  if (index >= song_queue.size())
-  {
-    return nullptr;
-  }
-
-  return &song_queue[index];
+  return song_queue;
 }
 
 int MiniAudioPlayer::getCurrentPositionSeconds() const
 {
-  if (current_index < 0 || !audio_state.sound_is_initialized)
-  {
-    return 0;
-  }
-
-  ma_uint64 cursor = 0;
-  if (ma_sound_get_cursor_in_pcm_frames(&audio_state.sound, &cursor) != MA_SUCCESS)
-  {
-    return 0;
-  }
-
-  ma_uint32 sr = ma_engine_get_sample_rate(&audio_state.engine);
-  if (sr == 0)
-  {
-    return 0;
-  }
-
-  return static_cast<int>(cursor / sr);
+  float seconds = 0.0F;
+  if (audio_state.sound_is_initialized && ma_sound_get_cursor_in_seconds(&audio_state.sound, &seconds) == MA_SUCCESS)
+    return std::max(0, static_cast<int>(seconds));
+  return 0;
 }
-
 int MiniAudioPlayer::getSongLengthSeconds() const
 {
-  if (song_length_pcm <= 0)
-  {
-    return 0;
-  }
-
-  ma_uint32 sr = ma_engine_get_sample_rate(&audio_state.engine);
-  if (sr == 0)
-  {
-    return 0;
-  }
-
-  return static_cast<int>(song_length_pcm / sr);
+  float seconds = 0.0F;
+  if (audio_state.sound_is_initialized && ma_sound_get_length_in_seconds(&audio_state.sound, &seconds) == MA_SUCCESS)
+    return std::max(0, static_cast<int>(seconds));
+  const SongMetadata *song = getCurrentSong();
+  return song == nullptr ? 0 : song->duration_seconds;
 }
 
 int MiniAudioPlayer::getProgressPercent() const
 {
-  int total = getSongLengthSeconds();
-  if (total <= 0)
-  {
+  const int length = getSongLengthSeconds();
+  if (length <= 0)
     return 0;
-  }
+  return std::clamp(getCurrentPositionSeconds() * 100 / length, 0, 100);
+}
 
-  int pos = getCurrentPositionSeconds();
-  return (pos * 100) / total;
+RingBuffer *MiniAudioPlayer::getRingBuffer()
+{
+  return audio_state.tap_ring.get();
+}
+
+ma_uint32 MiniAudioPlayer::getSampleRate() const
+{
+  return audio_state.engine_initialized ? ma_engine_get_sample_rate(&audio_state.engine) : 0;
 }
 
 bool MiniAudioPlayer::initVisualizerAudio()
 {
-  // grab node graph + endpoint (speakers)
-  ma_node_graph *node_graph = ma_engine_get_node_graph(&audio_state.engine);
-  ma_node *endpoint = ma_node_graph_get_endpoint(node_graph);
-
-  ma_uint32 channels = ma_engine_get_channels(&audio_state.engine);
-
-  // Tap node (passthrough) sits in the main audio path: sound -> tap -> endpoint.
+  ma_node_graph *graph = ma_engine_get_node_graph(&audio_state.engine);
+  ma_node *endpoint = ma_node_graph_get_endpoint(graph);
+  const ma_uint32 channels = ma_engine_get_channels(&audio_state.engine);
   audio_state.tap_ring = std::make_unique<RingBuffer>(16384);
-
-  ma_uint32 input_channels[1]  = { channels };
-  ma_uint32 output_channels[1] = { channels };
-
-  ma_node_config tap_cfg = ma_node_config_init();
-  tap_cfg.vtable          = &g_tap_vtable;
-  tap_cfg.pInputChannels  = input_channels;
-  tap_cfg.pOutputChannels = output_channels;
-
-  if (ma_node_init(node_graph, &tap_cfg, NULL, &audio_state.tap.base) != MA_SUCCESS)
-  {
-    Util::errorPrint("Tap node init failed");
-    return false;
-  }
   audio_state.tap.ring = audio_state.tap_ring.get();
-
-  // tap -> endpoint (you hear this)
+  audio_state.tap.frames_written.store(0, std::memory_order_relaxed);
+  ma_uint32 input_channels[1] = {channels};
+  ma_uint32 output_channels[1] = {channels};
+  ma_node_config config = ma_node_config_init();
+  config.vtable = &g_tap_vtable;
+  config.pInputChannels = input_channels;
+  config.pOutputChannels = output_channels;
+  if (ma_node_init(graph, &config, nullptr, &audio_state.tap.base) != MA_SUCCESS)
+    return false;
   if (ma_node_attach_output_bus(&audio_state.tap, 0, endpoint, 0) != MA_SUCCESS)
   {
-    Util::errorPrint("Failed to attach tap to endpoint");
-    ma_node_uninit(&audio_state.tap.base, NULL);
+    ma_node_uninit(&audio_state.tap.base, nullptr);
     return false;
   }
-
   audio_state.visualizer_initialized = true;
-  Util::debugPrint("initVisualizerAudio completed successfully");
   return true;
 }
