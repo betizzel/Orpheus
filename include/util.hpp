@@ -1,51 +1,74 @@
 // util.hpp
 #pragma once
-#include "ui.hpp"
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
 namespace Util
 {
 
+/// A single entry produced by listDir().
+struct DirEntry
+{
+  std::string name;  ///< file name (no trailing slash, even for directories)
+  bool is_dir = false;
+};
+
+/// Options controlling how a directory is enumerated.
+struct ListOptions
+{
+  bool include_hidden = false;  ///< show dot-files
+  bool audio_only = true;       ///< drop files that aren't playable/playlists
+  bool include_dirs = true;     ///< include sub-directories
+};
+
 /**
- * @brief expands path to home
- * @param read only string
+ * @brief expands a leading '~' to $HOME
  */
 std::filesystem::path expandHome(std::string_view path);
-/**
- * @brief returns path string of directory and song
- * @param read only string of the path
- */
-bool listDir(std::string_view path, std::vector<std::string> &content_list, std::vector<ItemType> &content_items);
-/**
- * @brief format total_seconds to a 00:00 clock format string
- * @param total_seconds to be formated as string
- */
-std::string formatDuration(int total_seconds); // e.g. "3:45"
 
 /**
- * @brief Print a debug message (only if ORPHEUS_DEBUG_ENABLED is defined)
- * @param message The message to print
+ * @brief Enumerate a directory: sub-directories first, then files, each group
+ *        sorted with a natural (human) ordering so "track2" precedes "track10".
+ * @return false when the path is missing, not a directory, or unreadable.
  */
+bool listDir(const std::filesystem::path &path, std::vector<DirEntry> &out, const ListOptions &opts = {});
+
+/**
+ * @brief Lowercase extension of a path/filename, without the dot ("" if none).
+ */
+std::string extensionOf(std::string_view name);
+
+/**
+ * @brief True when the file name has an extension Orpheus can decode.
+ *        The set widens when built with FFmpeg (ORPHEUS_FFMPEG).
+ */
+bool isSupportedAudio(std::string_view name);
+
+/**
+ * @brief True for .m3u / .m3u8 / .pls playlist files.
+ */
+bool isPlaylistFile(std::string_view name);
+
+/**
+ * @brief Case-insensitive "human" comparison: digit runs compare numerically.
+ */
+bool naturalLess(std::string_view a, std::string_view b);
+
+/**
+ * @brief Case-insensitive substring test (used by the '/' search).
+ */
+bool containsNoCase(std::string_view haystack, std::string_view needle);
+
+/**
+ * @brief format total_seconds as m:ss (or h:mm:ss past an hour)
+ */
+std::string formatDuration(int total_seconds);
+
 void debugPrint(const std::string &message);
-
-/**
- * @brief Print an informational message (only if ORPHEUS_DEBUG_ENABLED is
- * defined)
- * @param message The message to print
- */
 void infoPrint(const std::string &message);
-
-/**
- * @brief Print an error message
- * @param message The error message to print
- */
 void errorPrint(const std::string &message);
-
-/**
- * @brief Print a warning message
- * @param message The warning message to print
- */
 void warningPrint(const std::string &message);
+
 } // namespace Util
