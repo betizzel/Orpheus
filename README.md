@@ -1,5 +1,7 @@
 # Orpheus: A C++ Music Player
 
+![Orpheus gif](./orpheus-demo.gif)
+
 A terminal music player that browses your library, plays it, and renders the
 album art as coloured ASCII with an FFT equalizer next to it.
 
