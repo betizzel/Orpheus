@@ -2,4 +2,6 @@ build/*
 .hoppr/
 *.log
 *.json
-.cache
+.cachepackaging/arch/src/
+packaging/arch/pkg/
+packaging/arch/*.tar.*

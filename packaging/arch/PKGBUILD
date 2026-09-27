@@ -1,0 +1,26 @@
+pkgname=orpheus
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="C++ Terminal Music player: Album art, FFT visualizer, playlist support and remote playback over SSH"
+arch=('x86_64' 'aarch64')
+url="https://github.com/betizzel/Orpheus"
+license=('Apache-2.0')
+depends=('ncurses' 'taglib' 'lua' 'ffmpeg' 'libgcc' 'libstdc++' 'glibc')
+makedepends=('cmake' 'pkgconf')
+optdepends=('openssh: remote library playback (--remote)')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('82ccefff9fcf876ae71c48eaf637a50d13078ccd8f4f203fab7136d6b4387c7b')
+
+build() {
+  cmake -B build -S "Orpheus-$pkgver" \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DENABLE_FFMPEG=ON
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "Orpheus-$pkgver/config.lua" \
+    "$pkgdir/usr/share/doc/$pkgname/config.lua.example"
+}

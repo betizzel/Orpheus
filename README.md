@@ -35,6 +35,23 @@ miniaudio and stb are vendored in `include/`.
 
 ## Installation
 
+### Packages
+
+macOS / Linux (Homebrew):
+```bash
+brew install betizzel/orpheus/orpheus
+```
+
+Arch Linux (PKGBUILD in this repo):
+```bash
+git clone https://github.com/betizzel/Orpheus
+cd Orpheus/packaging/arch && makepkg -si
+```
+
+### Building from source
+
+#### Packages needed
+
 Debian/Ubuntu:
 ```bash
 sudo apt-get install build-essential cmake pkg-config libncursesw5-dev \
@@ -57,7 +74,7 @@ macOS (Homebrew):
 brew install cmake pkg-config ncurses taglib lua ffmpeg
 ```
 
-### Building
+#### Building
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
