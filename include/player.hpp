@@ -20,7 +20,12 @@ struct SongMetadata
   Art::ImageData cached_image;
 };
 
-enum class RepeatMode { Off, All, One };
+enum class RepeatMode
+{
+  Off,
+  All,
+  One
+};
 
 // Custom ma_node that copies incoming audio frames into a RingBuffer.
 struct TapNode
@@ -34,10 +39,13 @@ struct PlayerData
 {
   ma_resource_manager resource_manager{};
   bool resource_manager_initialized = false;
+
   ma_engine engine{};
   bool engine_initialized = false;
+
   ma_sound sound{};
   bool sound_is_initialized = false;
+
   TapNode tap;
   std::unique_ptr<RingBuffer> tap_ring;
   bool visualizer_initialized = false;
@@ -50,6 +58,7 @@ class MiniAudioPlayer
 public:
   MiniAudioPlayer();
   ~MiniAudioPlayer();
+
   /// @param vfs optional miniaudio VFS; null uses the default (local files).
   bool init(ma_vfs *vfs = nullptr);
   void cleanup();
@@ -94,25 +103,30 @@ public:
   RingBuffer *getRingBuffer();
   ma_uint32 getSampleRate() const;
 
-
 private:
   PlayerData audio_state;
+
   int current_index = -1;
   std::atomic<bool> just_ended{false};
+
   std::vector<SongMetadata> song_queue;
   std::vector<int> shuffle_order;
   RepeatMode repeat_mode = RepeatMode::Off;
   bool shuffle = false;
   float volume = 1.0f;
+
   std::mt19937 random_engine{std::random_device{}()};
 
   void stopCurrent(bool preserve_index = true);
   bool loadSong(const std::string &path);
   void rebuildShuffle(int preferred_index = -1);
   void onSongEnd();
+
   friend void miniaudio_on_song_end(void *user_data, ma_sound *sound);
+
   int orderedPosition(int index) const;
   int orderedIndex(int position) const;
   bool playNextOrdered(bool wrap);
+
   bool initVisualizerAudio();
 };

@@ -18,6 +18,7 @@ public:
   {
     size_t h = head.load(std::memory_order_relaxed);
     size_t t = tail.load(std::memory_order_acquire);
+
     // wrap around powers of 2
     size_t free = mask + 1 - (h - t);
     size_t count = std::min(n, free);
@@ -43,6 +44,7 @@ public:
     {
       dst[i] = buf[(t + i) & mask];
     }
+
     tail.store(t + count, std::memory_order_release);
     return count;
   }

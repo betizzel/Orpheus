@@ -26,7 +26,7 @@ album art as coloured ASCII with an FFT equalizer next to it.
 - ncursesw
 - TagLib
 - Lua (5.3+)
-- FFmpeg (`libavcodec`, `libavformat`, `libavutil`, `libswresample`) — optional
+- FFmpeg (`libavcodec`, `libavformat`, `libavutil`, `libswresample`), optional
   but required for M4A/AAC/ALAC/Opus/OGG
 
 miniaudio and stb are vendored in `include/`.
@@ -73,7 +73,7 @@ missing) or `-DENABLE_FFMPEG=OFF` (mp3/flac/wav only).
 orpheus
 ```
 
-Debug output goes to `orpheus_debug.log` in the working directory — the
+Debug output goes to `orpheus_debug.log` in the working directory, since the
 terminal belongs to ncurses.
 
 ## Keybinds
@@ -105,8 +105,8 @@ Press `6` (or `?`) inside Orpheus for the full list.
 Playlists can be made inside the player itself.
 
 - `A` in the Directory, Library, Queue or Home tab opens a picker listing every
-  saved playlist plus `[+ new playlist]`. It files whatever is highlighted —
-  a single track, a whole album, or a folder (recursively) — into the chosen
+  saved playlist plus `[+ new playlist]`. It files whatever is highlighted
+  (a single track, a whole album, or a folder, recursively) into the chosen
   playlist, creating it if you pick the new-playlist row.
 - `a` in the Playlists tab creates an empty playlist to fill in later.
 - `w` in the Queue tab snapshots the entire queue.

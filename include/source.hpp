@@ -1,4 +1,4 @@
-// source.hpp — where the UI gets its music from.
+// source.hpp: where the UI gets its music from.
 //
 // The browser, the library tab and the queue used to call Util::listDir and
 // Library::* directly against the local filesystem. With remote playback there
@@ -39,8 +39,10 @@ public:
 
   /// Human label for the header, e.g. "~/Music" or "nas:~/Music".
   virtual const std::string &describe() const = 0;
+
   /// True when bytes travel over the network; the UI warns before bulk work.
   virtual bool isRemote() const = 0;
+
   /// True while the provider can still answer (an SSH session can die).
   virtual bool alive() const = 0;
 
@@ -49,13 +51,16 @@ public:
   virtual std::string join(const std::string &dir, const std::string &name) const = 0;
   virtual std::string parent(const std::string &path) const = 0;
   virtual bool isRoot(const std::string &path) const = 0;
+
   /// Last component, for display.
   virtual std::string baseName(const std::string &path) const = 0;
 
   // --- content -----------------------------------------------------------
   virtual bool list(const std::string &path, std::vector<Util::DirEntry> &out) = 0;
+
   /// True when `path` names a directory (cheap for local, cached for remote).
   virtual bool isDirectory(const std::string &path) = 0;
+
   /// Tags only; never decodes cover art (that is the slow part).
   virtual SongMetadata metadata(const std::string &path) = 0;
   virtual bool coverArt(const std::string &path, Art::ImageData &out) = 0;
@@ -69,6 +74,7 @@ public:
 
   // --- library index -----------------------------------------------------
   virtual bool albums(std::vector<Library::Album> &out) = 0;
+
   /**
    * @brief Ensure `album.tracks` is populated for the album at `index`.
    * Local albums always are. A remote album arrives as a summary and costs
@@ -76,8 +82,10 @@ public:
    * album rather than N trips just to draw the list.
    */
   virtual bool ensureTracks(size_t index, Library::Album &album) = 0;
+
   virtual ScanState scanState() = 0;
   virtual void startScan(bool force) = 0;
+
   /// Expand an album into queue entries (art is loaded lazily per track).
   virtual std::vector<SongMetadata> albumToQueue(const Library::Album &album) = 0;
 
@@ -87,8 +95,10 @@ public:
    * @param limit  hard cap on results; the remote walk also stops after a
    *               bounded number of requests, since each level is a round trip.
    */
-  virtual bool search(const std::string &root_path, const std::string &query,
-                      std::vector<std::pair<std::string, bool>> &out, size_t limit) = 0;
+  virtual bool search(const std::string &root_path,
+                      const std::string &query,
+                      std::vector<std::pair<std::string, bool>> &out,
+                      size_t limit) = 0;
 };
 
 /// Filesystem-backed provider; owns a background Library::Scanner.

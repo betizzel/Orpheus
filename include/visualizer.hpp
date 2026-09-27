@@ -1,4 +1,4 @@
-// visualizer.hpp — FFT-based music visualizer
+// visualizer.hpp: FFT-based music visualizer
 #pragma once
 #include "ringbuffer.hpp"
 #include <complex>
@@ -22,11 +22,16 @@ inline std::string styleName(Style s)
 {
   switch (s)
   {
-    case Style::BLOCK:      return "block";
-    case Style::ANSI_ART:   return "ansi-art";
-    case Style::BRAILLE:    return "braille";
-    case Style::SPECTROGRAM:return "spectrogram";
+  case Style::BLOCK:
+    return "block";
+  case Style::ANSI_ART:
+    return "ansi-art";
+  case Style::BRAILLE:
+    return "braille";
+  case Style::SPECTROGRAM:
+    return "spectrogram";
   }
+
   return "?";
 }
 
@@ -34,28 +39,30 @@ inline std::string styleName(Style s)
 // levels and per-bar peaks). One instance per visualizer.
 struct Analyzer
 {
-  static constexpr int FFT_N = 1024;   // power of 2; gives 512 useful bins
+  static constexpr int FFT_N = 1024; // power of 2; gives 512 useful bins
 
   // FFT workspace
-  std::vector<float> hann;             // precomputed Hann window, size FFT_N
-  std::vector<std::complex<float>> buf;// FFT working buffer, size FFT_N
-  std::vector<float> magnitudes;       // per-bin magnitudes, size FFT_N/2
+  std::vector<float> hann;              // precomputed Hann window, size FFT_N
+  std::vector<std::complex<float>> buf; // FFT working buffer, size FFT_N
+  std::vector<float> magnitudes;        // per-bin magnitudes, size FFT_N/2
 
   // Bar state (recomputed when bar_count changes)
   int bar_count = 0;
-  std::vector<int> bin_lo;             // inclusive lower bin index per bar
-  std::vector<int> bin_hi;             // exclusive upper bin index per bar
-  std::vector<float> levels;           // smoothed bar levels, 0..1
-  std::vector<float> peaks;            // peak-hold with slow decay, 0..1
+  std::vector<int> bin_lo;   // inclusive lower bin index per bar
+  std::vector<int> bin_hi;   // exclusive upper bin index per bar
+  std::vector<float> levels; // smoothed bar levels, 0..1
+  std::vector<float> peaks;  // peak-hold with slow decay, 0..1
 
   // Tuning
-  float smooth = 0.30f;                // higher = snappier, lower = lazier
-  float peak_decay = 0.02f;            // peak fall per frame
-  float noise_floor = 0.02f;           // magnitudes below this -> 0
+  float smooth = 0.30f;      // higher = snappier, lower = lazier
+  float peak_decay = 0.02f;  // peak fall per frame
+  float noise_floor = 0.02f; // magnitudes below this -> 0
 
   Analyzer();
+
   // Recompute log binning for a new bar count + sample rate
   void configure(int bars, uint32_t sample_rate);
+
   // Pull FFT_N samples from the ring buffer, run FFT, update levels/peaks.
   // Returns false if there weren't enough samples yet.
   bool update(RingBuffer &ring, uint32_t sample_rate);
@@ -82,7 +89,7 @@ struct State
   std::vector<float> spec_grid;
   int spec_cols = 0;
   int spec_rows = 0;
-  int spec_head = 0;       // next column to write
+  int spec_head = 0; // next column to write
   uint32_t last_sample_rate = 0;
 
   // Throttle: only run FFT/analyze every N ms to save CPU
@@ -94,7 +101,13 @@ struct State
 // Render the active style into the given window region.
 // (x, y) is the top-left cell, width/height are the cell dimensions.
 // Call every frame from the UI thread.
-void render(WINDOW *win, int y, int x, int width, int height,
-            State &state, RingBuffer &ring, uint32_t sample_rate);
+void render(WINDOW *win,
+            int y,
+            int x,
+            int width,
+            int height,
+            State &state,
+            RingBuffer &ring,
+            uint32_t sample_rate);
 
 } // namespace Visualizer

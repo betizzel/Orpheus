@@ -1,2 +1,20 @@
 BasedOnStyle: Microsoft
 IndentWidth: 2
+ColumnLimit: 100
+
+# Readability: braces on every if/for/while body, blank line between definitions,
+# and allow a single blank line to group logical steps inside functions.
+InsertBraces: true
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1
+KeepEmptyLines:
+  AtStartOfBlock: false
+  AtEndOfFile: false
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortLambdasOnASingleLine: Empty
+BinPackArguments: false
+BinPackParameters: false

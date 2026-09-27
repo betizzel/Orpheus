@@ -1,4 +1,4 @@
-// Orpheus — a terminal music player.
+// Orpheus: a terminal music player.
 //
 // main() owns process-level setup only: logging redirection, configuration,
 // choosing a music source (local disk or a remote orpheusd over SSH), ncurses
@@ -23,15 +23,16 @@ namespace
 
 void usage()
 {
-  std::cerr << "orpheus - a terminal music player\n\n"
-               "  --remote <host>        play a library served by orpheusd on <host>, over ssh\n"
-               "  --socket <path>        attach to a local orpheusd Unix socket\n"
-               "  --remote-cmd <cmd>     command run on the remote host (default: orpheusd --stdio)\n"
-               "  --ssh-opt <arg>        extra argument for ssh; repeatable\n"
-               "                         e.g. --ssh-opt -p --ssh-opt 2222, or --ssh-opt -Jbastion\n"
-               "  --music-dir <dir>      local music root, overriding the config\n"
-               "  --help                 this text\n\n"
-               "Audio always plays on THIS machine; a remote host only serves files.\n";
+  std::cerr
+      << "orpheus - a terminal music player\n\n"
+         "  --remote <host>        play a library served by orpheusd on <host>, over ssh\n"
+         "  --socket <path>        attach to a local orpheusd Unix socket\n"
+         "  --remote-cmd <cmd>     command run on the remote host (default: orpheusd --stdio)\n"
+         "  --ssh-opt <arg>        extra argument for ssh; repeatable\n"
+         "                         e.g. --ssh-opt -p --ssh-opt 2222, or --ssh-opt -Jbastion\n"
+         "  --music-dir <dir>      local music root, overriding the config\n"
+         "  --help                 this text\n\n"
+         "Audio always plays on THIS machine; a remote host only serves files.\n";
 }
 
 } // namespace
@@ -56,20 +57,31 @@ int main(int argc, char **argv)
     const bool has_value = (i + 1) < argc;
 
     if (arg == "--remote" && has_value)
+    {
       remote_host = argv[++i];
+    }
     else if (arg == "--socket" && has_value)
+    {
       socket_path = argv[++i];
+    }
     else if (arg == "--remote-cmd" && has_value)
+    {
       remote_cmd = argv[++i];
+    }
     else if (arg == "--ssh-opt" && has_value)
+    {
       ssh_opts.emplace_back(argv[++i]);
+    }
     else if (arg == "--music-dir" && has_value)
+    {
       music_dir_override = argv[++i];
+    }
     else if (arg == "--help" || arg == "-h")
     {
       std::cout.rdbuf(old_cout);
       std::cerr.rdbuf(old_cerr);
       usage();
+
       return 0;
     }
     else
@@ -78,12 +90,15 @@ int main(int argc, char **argv)
       std::cerr.rdbuf(old_cerr);
       std::cerr << "orpheus: unknown argument '" << arg << "'\n\n";
       usage();
+
       return 2;
     }
   }
 
   if (Config::writeDefaultConfig())
+  {
     Util::infoPrint("Wrote a starter config to " + Config::configPath().string());
+  }
 
   Config::Settings cfg = Config::load();
   Util::debugPrint("Config: " + Config::lastStatus());
@@ -93,7 +108,9 @@ int main(int argc, char **argv)
   {
     remote_host = cfg.remote_host;
     if (remote_cmd == "orpheusd --stdio" && !cfg.remote_command.empty())
+    {
       remote_cmd = cfg.remote_command;
+    }
   }
 
   // The session must outlive the UI: the VFS and the remote provider both
@@ -105,8 +122,10 @@ int main(int argc, char **argv)
   if (!remote_host.empty() || !socket_path.empty())
   {
     std::string error;
-    session = remote_host.empty() ? Remote::Session::connectUnix(socket_path, error)
-                                  : Remote::Session::connectSsh(remote_host, remote_cmd, ssh_opts, error);
+    session = remote_host.empty()
+                  ? Remote::Session::connectUnix(socket_path, error)
+                  : Remote::Session::connectSsh(remote_host, remote_cmd, ssh_opts, error);
+
     if (!session)
     {
       // Connection problems are the single most likely failure here, and the
@@ -115,6 +134,7 @@ int main(int argc, char **argv)
       std::cout.rdbuf(old_cout);
       std::cerr.rdbuf(old_cerr);
       std::cerr << "orpheus: " << error << "\n";
+
       return 1;
     }
 
@@ -132,7 +152,7 @@ int main(int argc, char **argv)
 
   setlocale(LC_ALL, ""); // wide-char output: album art, box drawing, unicode tags
   initscr();
-  set_escdelay(0);       // no delay after <Esc>
+  set_escdelay(0); // no delay after <Esc>
   raw();
   keypad(stdscr, TRUE);
   noecho();
@@ -149,5 +169,6 @@ int main(int argc, char **argv)
 
   std::cout.rdbuf(old_cout);
   std::cerr.rdbuf(old_cerr);
+
   return 0;
 }

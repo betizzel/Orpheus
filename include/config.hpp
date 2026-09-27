@@ -9,17 +9,17 @@ namespace Config
 struct Settings
 {
   std::string music_dir = "~/Music";
-  std::string art_color_mode = "ansi";      // "ansi" | "grayscale"
-  std::string art_render_mode = "block";    // "block" | "detailed"
-  std::string visualizer = "block";         // "block"|"ansi"|"braille"|"spectrogram"
-  bool dynamic_palette = true;              // EQ colours taken from album art
-  bool show_hidden = false;                 // show dot-files in the browser
-  int fps = 30;                             // UI redraw cap, clamped 5..120
-  float volume = 1.0f;                      // 0.0 .. 1.0
+  std::string art_color_mode = "ansi";   // "ansi" | "grayscale"
+  std::string art_render_mode = "block"; // "block" | "detailed"
+  std::string visualizer = "block";      // "block"|"ansi"|"braille"|"spectrogram"
+  bool dynamic_palette = true;           // EQ colours taken from album art
+  bool show_hidden = false;              // show dot-files in the browser
+  int fps = 30;                          // UI redraw cap, clamped 5..120
+  float volume = 1.0f;                   // 0.0 .. 1.0
   bool shuffle = false;
-  std::string repeat = "off";               // "off" | "all" | "one"
-  bool scan_on_start = true;                // kick off library scan at launch
-  std::string remote_host;                  // non-empty: attach to orpheusd over ssh
+  std::string repeat = "off";                      // "off" | "all" | "one"
+  bool scan_on_start = true;                       // kick off library scan at launch
+  std::string remote_host;                         // non-empty: attach to orpheusd over ssh
   std::string remote_command = "orpheusd --stdio"; // command run on the remote host
 };
 

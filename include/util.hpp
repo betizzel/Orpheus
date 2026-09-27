@@ -11,16 +11,16 @@ namespace Util
 /// A single entry produced by listDir().
 struct DirEntry
 {
-  std::string name;  ///< file name (no trailing slash, even for directories)
+  std::string name; ///< file name (no trailing slash, even for directories)
   bool is_dir = false;
 };
 
 /// Options controlling how a directory is enumerated.
 struct ListOptions
 {
-  bool include_hidden = false;  ///< show dot-files
-  bool audio_only = true;       ///< drop files that aren't playable/playlists
-  bool include_dirs = true;     ///< include sub-directories
+  bool include_hidden = false; ///< show dot-files
+  bool audio_only = true;      ///< drop files that aren't playable/playlists
+  bool include_dirs = true;    ///< include sub-directories
 };
 
 /**
@@ -33,7 +33,9 @@ std::filesystem::path expandHome(std::string_view path);
  *        sorted with a natural (human) ordering so "track2" precedes "track10".
  * @return false when the path is missing, not a directory, or unreadable.
  */
-bool listDir(const std::filesystem::path &path, std::vector<DirEntry> &out, const ListOptions &opts = {});
+bool listDir(const std::filesystem::path &path,
+             std::vector<DirEntry> &out,
+             const ListOptions &opts = {});
 
 /**
  * @brief Lowercase extension of a path/filename, without the dot ("" if none).

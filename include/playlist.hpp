@@ -1,7 +1,7 @@
 #pragma once
 
-#include <filesystem>
 #include <cstddef>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -10,9 +10,9 @@ namespace Playlist
 
 struct Entry
 {
-  std::string path;              // absolute, resolved; or verbatim "orpheus://<wire path>" for a remote track
-  std::string title;             // display title from #EXTINF, may be empty
-  int duration_seconds = 0;      // -1/0 when unknown
+  std::string path;  // absolute, resolved; or verbatim "orpheus://<wire path>" for a remote track
+  std::string title; // display title from #EXTINF, may be empty
+  int duration_seconds = 0; // -1/0 when unknown
 };
 
 /** @brief ${XDG_DATA_HOME:~/.local/share}/orpheus/playlists (created on demand). */

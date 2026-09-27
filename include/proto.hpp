@@ -11,7 +11,7 @@
 // local files.
 //
 // TRANSPORT:
-// Tansport is `ssh <host> orpheusd --stdio`: the server speaks the protocol on 
+// Tansport is `ssh <host> orpheusd --stdio`: the server speaks the protocol on
 // stdin/stdout of a process SSH spawned for us. A Unix socket (`--socket <path>`) is
 // supported for the same-machine case.
 //
@@ -136,7 +136,7 @@ inline constexpr size_t kMaxChunk = 1u << 20; // 1 MiB
 inline constexpr size_t kReadAhead = 2u << 20; // 2 MiB
 
 /**
- * @brief Byte transport stream 
+ * @brief Byte transport stream
  **/
 class Stream
 {
@@ -145,10 +145,13 @@ public:
 
   /// Read exactly n bytes. False on EOF or error (partial data is discarded).
   virtual bool readExact(void *dst, size_t n) = 0;
+
   /// Write all n bytes. False on error.
   virtual bool writeAll(const void *src, size_t n) = 0;
+
   /// Read one '\n'-terminated line, newline stripped. False on EOF/overlong.
   virtual bool readLine(std::string &out) = 0;
+
   /// True while the transport is usable.
   virtual bool good() const = 0;
   virtual void close() = 0;
@@ -216,9 +219,11 @@ private:
   int read_fd_;
   int write_fd_;
   bool owns_;
+
   bool good_ = true;
   bool use_send_ = true; // send(MSG_NOSIGNAL) until the fd proves not to be a socket
   const volatile std::sig_atomic_t *interrupt_ = nullptr;
+
   std::vector<char> buf_;
   size_t head_ = 0;
   size_t tail_ = 0;

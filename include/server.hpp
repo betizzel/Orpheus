@@ -1,4 +1,4 @@
-// server.hpp — orpheusd, the machine-side half of remote playback.
+// server.hpp: orpheusd, the machine-side half of remote playback.
 #pragma once
 
 #include "proto.hpp"

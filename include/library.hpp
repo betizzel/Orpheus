@@ -20,7 +20,9 @@ namespace Library
 SongMetadata loadSongMetadata(const std::string &path, bool load_art = true);
 
 /** @brief Decode embedded cover art first, then a sibling image file. */
-bool loadCoverArt(const std::string &song_path, Art::ImageData &out, std::string *resolved_path = nullptr);
+bool loadCoverArt(const std::string &song_path,
+                  Art::ImageData &out,
+                  std::string *resolved_path = nullptr);
 
 struct Track
 {
@@ -38,6 +40,7 @@ struct Album
   std::string directory;
   int year = 0;
   int total_seconds = 0;
+
   /// Number of tracks. Always == tracks.size() locally; for a remote album
   /// summary it is known before `tracks` has been fetched.
   int track_count = 0;
@@ -56,15 +59,19 @@ public:
   /** @brief Kick off (or restart) a background scan. Returns immediately. */
   void start(const std::filesystem::path &root, bool force_rescan = false);
   void cancel();
+
   bool isScanning() const;
   int filesScanned() const;
   int filesTotal() const;
   std::string statusLine() const;
+
   /** @brief Snapshot of albums found so far, sorted for display. */
   std::vector<Album> albums() const;
   size_t albumCount() const;
+
   /** @brief Number of tag rows reused from the on-disk cache in the current scan. */
   int cacheHits() const;
+
   /** @brief Convert an album to a queue, decoding art only for its first track. */
   static std::vector<SongMetadata> albumToQueue(const Album &album);
 
@@ -74,6 +81,7 @@ private:
   mutable std::mutex albums_mutex_;
   std::vector<Album> albums_;
   std::thread worker_;
+
   std::atomic<bool> cancel_requested_{false};
   std::atomic<bool> scanning_{false};
   std::atomic<int> files_scanned_{0};

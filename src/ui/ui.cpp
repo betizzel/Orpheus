@@ -37,7 +37,9 @@ constexpr int GRAYSCALE_ANSI_MAP[10] = {236, 238, 240, 242, 244, 246, 248, 250, 
 std::string clipToWidth(const std::string &text, int max_width)
 {
   if (max_width <= 0)
+  {
     return {};
+  }
 
   std::mbstate_t st{};
   const char *p = text.c_str();
@@ -50,15 +52,25 @@ std::string clipToWidth(const std::string &text, int max_width)
     wchar_t wc = 0;
     size_t consumed = std::mbrtowc(&wc, p, static_cast<size_t>(end - p), &st);
     if (consumed == static_cast<size_t>(-2) || consumed == static_cast<size_t>(-1))
+    {
       break; // invalid/incomplete: stop at the last good boundary
+    }
+
     if (consumed == 0)
+    {
       consumed = 1;
+    }
 
     int w = wcwidth(wc);
     if (w < 0)
+    {
       w = 0; // control chars render as nothing useful; don't count them
+    }
+
     if (width + w > max_width)
+    {
       break;
+    }
 
     width += w;
     kept += consumed;
@@ -72,7 +84,10 @@ std::string clipToWidth(const std::string &text, int max_width)
 void printClipped(WINDOW *win, int y, int x, int max_width, const std::string &text)
 {
   if (max_width <= 0)
+  {
     return;
+  }
+
   const std::string clipped = clipToWidth(text, max_width);
   mvwprintw(win, y, x, "%s", clipped.c_str());
 }
@@ -81,10 +96,16 @@ void printClipped(WINDOW *win, int y, int x, int max_width, const std::string &t
 void printRow(WINDOW *win, int y, int x, int max_width, const std::string &text, bool selected)
 {
   if (selected)
+  {
     wattron(win, A_REVERSE | A_BOLD);
+  }
+
   printClipped(win, y, x, max_width, text);
+
   if (selected)
+  {
     wattroff(win, A_REVERSE | A_BOLD);
+  }
 }
 
 /**
@@ -117,11 +138,17 @@ void drawCell(WINDOW *win, int y, int x, const Art::AsciiCell &cell, Art::ColorM
 void drawAsciiArt(WINDOW *win, int start_y, int start_x, const Art::AsciiCanvas &art)
 {
   if (art.cells.empty() || art.width == 0 || art.height == 0)
+  {
     return;
+  }
 
   for (int y = 0; y < art.height; ++y)
+  {
     for (int x = 0; x < art.width; ++x)
+    {
       drawCell(win, start_y + y, start_x + x, art.cells[y * art.width + x], art.mode);
+    }
+  }
 }
 
 const char *repeatLabel(RepeatMode mode)
@@ -135,6 +162,7 @@ const char *repeatLabel(RepeatMode mode)
   case RepeatMode::Off:
     break;
   }
+
   return "off";
 }
 
@@ -151,20 +179,30 @@ Art::RenderMode renderModeFromString(const std::string &s)
 Visualizer::Style vizStyleFromString(const std::string &s)
 {
   if (s == "ansi")
+  {
     return Visualizer::Style::ANSI_ART;
+  }
   if (s == "braille")
+  {
     return Visualizer::Style::BRAILLE;
+  }
   if (s == "spectrogram")
+  {
     return Visualizer::Style::SPECTROGRAM;
+  }
   return Visualizer::Style::BLOCK;
 }
 
 RepeatMode repeatFromString(const std::string &s)
 {
   if (s == "all")
+  {
     return RepeatMode::All;
+  }
   if (s == "one")
+  {
     return RepeatMode::One;
+  }
   return RepeatMode::Off;
 }
 
@@ -184,15 +222,21 @@ void ListView::move(int delta, int count, bool wrap)
   }
 
   long long next = static_cast<long long>(selected) + delta;
+
   if (wrap)
   {
     // Single-step moves wrap around the ends; multi-row jumps (ctrl-d/u)
     // saturate so a half-page down near the bottom doesn't teleport to the top.
     if (delta == 1 && next >= count)
+    {
       next = 0;
+    }
     else if (delta == -1 && next < 0)
+    {
       next = count - 1;
+    }
   }
+
   selected = static_cast<int>(std::clamp<long long>(next, 0, count - 1));
 }
 
@@ -203,6 +247,7 @@ void ListView::jump(int index, int count)
     selected = 0;
     return;
   }
+
   selected = std::clamp(index, 0, count - 1);
 }
 
@@ -216,10 +261,16 @@ void ListView::clamp(int count, int height)
   }
 
   selected = std::clamp(selected, 0, count - 1);
+
   if (selected < scroll)
+  {
     scroll = selected;
+  }
   if (selected >= scroll + height)
+  {
     scroll = selected - height + 1;
+  }
+
   scroll = std::clamp(scroll, 0, std::max(0, count - height));
 }
 
@@ -237,11 +288,18 @@ UIManager::~UIManager()
 void UIManager::destroyWindows()
 {
   if (state.header)
+  {
     delwin(state.header);
+  }
   if (state.main_area)
+  {
     delwin(state.main_area);
+  }
   if (state.footer)
+  {
     delwin(state.footer);
+  }
+
   state.header = nullptr;
   state.main_area = nullptr;
   state.footer = nullptr;
@@ -261,6 +319,7 @@ void UIManager::createWindows()
   getmaxyx(stdscr, state.max_rows, state.max_cols);
 
   const int body_rows = std::max(1, state.max_rows - HEADER_ROWS - FOOTER_ROWS);
+
   state.header = newwin(HEADER_ROWS, state.max_cols, 0, 0);
   state.main_area = newwin(body_rows, state.max_cols, HEADER_ROWS, 0);
   state.footer = newwin(FOOTER_ROWS, state.max_cols, state.max_rows - FOOTER_ROWS, 0);
@@ -278,6 +337,7 @@ void UIManager::handleResize()
   endwin();
   refresh();
   clear();
+
   destroyWindows();
   createWindows();
 
@@ -288,14 +348,17 @@ void UIManager::handleResize()
   refresh();
 }
 
-void UIManager::init(const Config::Settings &cfg, std::unique_ptr<Source::Provider> source, ma_vfs *vfs)
+void UIManager::init(const Config::Settings &cfg,
+                     std::unique_ptr<Source::Provider> source,
+                     ma_vfs *vfs)
 {
   state.cfg = cfg;
   state.source = std::move(source);
   Util::debugPrint("initializing UI with source: " + state.source->describe());
 
   createWindows();
-  Util::debugPrint("Terminal dimensions: " + std::to_string(state.max_rows) + " x " + std::to_string(state.max_cols));
+  Util::debugPrint("Terminal dimensions: " + std::to_string(state.max_rows) + " x " +
+                   std::to_string(state.max_cols));
 
   state.music_root = state.source->root();
   state.current_directory = state.music_root;
@@ -312,18 +375,28 @@ void UIManager::init(const Config::Settings &cfg, std::unique_ptr<Source::Provid
   // A non-null VFS makes ma_sound_init_from_file resolve "orpheus://" URLs
   // through the remote session; local paths still go to the default VFS.
   if (!state.player.init(vfs))
+  {
     Util::errorPrint("Audio engine failed to initialise; playback is unavailable");
+  }
 
   state.player.setVolume(cfg.volume);
+
   if (cfg.shuffle)
+  {
     state.player.toggleShuffle();
+  }
+
   for (RepeatMode want = repeatFromString(cfg.repeat); state.player.getRepeat() != want;)
+  {
     state.player.cycleRepeat();
+  }
 
   refreshPlaylists();
 
   if (cfg.scan_on_start)
+  {
     state.source->startScan(false);
+  }
 
   Util::debugPrint("UI initialized successfully");
 }
@@ -335,7 +408,10 @@ void UIManager::init(const Config::Settings &cfg, std::unique_ptr<Source::Provid
 int UIManager::listHeight() const
 {
   if (!state.main_area)
+  {
     return 0;
+  }
+
   return std::max(0, getmaxy(state.main_area) - LIST_TOP - 1);
 }
 
@@ -349,13 +425,20 @@ std::string UIManager::selectedPath() const
 {
   if (state.search_results_active)
   {
-    if (state.search_view.selected < 0 || state.search_view.selected >= static_cast<int>(state.search_hits.size()))
+    if (state.search_view.selected < 0 ||
+        state.search_view.selected >= static_cast<int>(state.search_hits.size()))
+    {
       return {};
+    }
+
     return state.search_hits[state.search_view.selected].path;
   }
 
   if (state.browser.selected < 0 || state.browser.selected >= static_cast<int>(state.items.size()))
+  {
     return {};
+  }
+
   return state.source->join(state.current_directory, state.items[state.browser.selected].name);
 }
 
@@ -371,11 +454,14 @@ void UIManager::refreshListing(bool force)
   // explicit validity flag so the remote root ("") isn't mistaken for "already
   // listed" on the very first frame.
   if (!force && state.listing_valid && state.current_directory == state.last_listed_directory)
+  {
     return;
+  }
 
   if (!state.source->list(state.current_directory, state.items))
   {
-    setStatus("Cannot read " + (state.current_directory.empty() ? state.source->describe() : state.current_directory));
+    setStatus("Cannot read " + (state.current_directory.empty() ? state.source->describe()
+                                                                : state.current_directory));
     state.items.clear();
   }
 
@@ -393,7 +479,9 @@ void UIManager::openParentDirectory()
   }
 
   if (state.source->isRoot(state.current_directory))
+  {
     return; // already at the top of this source
+  }
 
   const std::string child = state.source->baseName(state.current_directory);
   state.current_directory = state.source->parent(state.current_directory);
@@ -427,6 +515,7 @@ void UIManager::runSearch(const std::string &query)
 
   constexpr size_t kMaxHits = 2000;
   std::vector<std::pair<std::string, bool>> hits;
+
   if (!state.source->search(state.search_root, query, hits, kMaxHits))
   {
     setStatus("Search failed");
@@ -435,6 +524,7 @@ void UIManager::runSearch(const std::string &query)
 
   const size_t prefix = state.search_root.empty() ? 0 : state.search_root.size() + 1;
   state.search_hits.reserve(hits.size());
+
   for (auto &[path, is_dir] : hits)
   {
     SearchHit hit;
@@ -462,16 +552,29 @@ void UIManager::enqueuePath(const std::string &path, bool recursive, std::vector
     // into sub-directories (multi-disc sets) in the same order.
     std::vector<Util::DirEntry> entries;
     if (!state.source->list(path, entries))
+    {
       return;
+    }
 
     for (const auto &entry : entries)
+    {
       if (!entry.is_dir && Util::isSupportedAudio(entry.name))
+      {
         out.push_back(state.source->metadata(state.source->join(path, entry.name)));
+      }
+    }
 
     if (recursive)
+    {
       for (const auto &entry : entries)
+      {
         if (entry.is_dir)
+        {
           enqueuePath(state.source->join(path, entry.name), true, out);
+        }
+      }
+    }
+
     return;
   }
 
@@ -482,17 +585,24 @@ void UIManager::enqueuePath(const std::string &path, bool recursive, std::vector
     // absolute paths here; "orpheus://" entries resolve through the source.
     std::vector<Playlist::Entry> entries;
     if (Playlist::load(path, entries))
+    {
       for (const auto &entry : entries)
       {
         SongMetadata song;
         if (playlistEntrySong(entry, song))
+        {
           out.push_back(std::move(song));
+        }
       }
+    }
+
     return;
   }
 
   if (Util::isSupportedAudio(name))
+  {
     out.push_back(state.source->metadata(path));
+  }
 }
 
 void UIManager::startQueued(std::vector<SongMetadata> songs, bool replace_queue)
@@ -504,6 +614,7 @@ void UIManager::startQueued(std::vector<SongMetadata> songs, bool replace_queue)
   }
 
   const size_t count = songs.size();
+
   if (replace_queue)
   {
     state.player.replaceQueue(std::move(songs), 0);
@@ -513,10 +624,15 @@ void UIManager::startQueued(std::vector<SongMetadata> songs, bool replace_queue)
   {
     const bool was_empty = state.player.isEmpty();
     state.player.queueSongs(std::move(songs));
+
     if (was_empty)
+    {
       state.player.playIndex(0);
+    }
+
     setStatus("Queued " + std::to_string(count) + " track(s)");
   }
+
   state.queue.clamp(static_cast<int>(state.player.getQueueSize()), listHeight());
 }
 
@@ -524,7 +640,9 @@ void UIManager::enqueueSelection(bool replace_queue)
 {
   const std::string path = selectedPath();
   if (path.empty())
+  {
     return;
+  }
 
   std::vector<SongMetadata> songs;
   enqueuePath(path, true, songs);
@@ -535,8 +653,11 @@ void UIManager::enterSelection()
 {
   if (state.search_results_active)
   {
-    if (state.search_view.selected < 0 || state.search_view.selected >= static_cast<int>(state.search_hits.size()))
+    if (state.search_view.selected < 0 ||
+        state.search_view.selected >= static_cast<int>(state.search_hits.size()))
+    {
       return;
+    }
 
     const SearchHit &hit = state.search_hits[state.search_view.selected];
     if (hit.is_dir)
@@ -547,12 +668,15 @@ void UIManager::enterSelection()
       refreshListing(true);
       return;
     }
+
     enqueueSelection(false);
     return;
   }
 
   if (state.browser.selected < 0 || state.browser.selected >= static_cast<int>(state.items.size()))
+  {
     return;
+  }
 
   const Util::DirEntry &entry = state.items[state.browser.selected];
   if (entry.is_dir)
@@ -573,16 +697,25 @@ void UIManager::enterSelection()
 void UIManager::rebuildLibraryRows()
 {
   state.library_rows.clear();
+
   if (state.album_expanded.size() != state.albums.size())
+  {
     state.album_expanded.assign(state.albums.size(), false);
+  }
 
   for (size_t a = 0; a < state.albums.size(); ++a)
   {
     state.library_rows.push_back({static_cast<int>(a), -1});
+
     if (!state.album_expanded[a])
+    {
       continue;
+    }
+
     for (size_t t = 0; t < state.albums[a].tracks.size(); ++t)
+    {
       state.library_rows.push_back({static_cast<int>(a), static_cast<int>(t)});
+    }
   }
 
   state.library.clamp(static_cast<int>(state.library_rows.size()), listHeight());
@@ -597,10 +730,11 @@ void UIManager::refreshPlaylists()
   // Keep the cursor on the same playlist across a reload; the list is
   // re-read after every create/rename/delete/add and jumping back to the
   // top each time makes building a playlist miserable.
-  const std::string keep = state.playlists.selected >= 0 &&
-                                   state.playlists.selected < static_cast<int>(state.playlist_names.size())
-                               ? state.playlist_names[state.playlists.selected]
-                               : std::string();
+  const std::string keep =
+      state.playlists.selected >= 0 &&
+              state.playlists.selected < static_cast<int>(state.playlist_names.size())
+          ? state.playlist_names[state.playlists.selected]
+          : std::string();
 
   state.playlist_names = Playlist::listSaved();
   state.previewed_playlist.clear();
@@ -611,14 +745,18 @@ void UIManager::refreshPlaylists()
   {
     const auto it = std::find(state.playlist_names.begin(), state.playlist_names.end(), keep);
     if (it != state.playlist_names.end())
+    {
       state.playlists.selected = static_cast<int>(it - state.playlist_names.begin());
+    }
   }
+
   state.playlists.clamp(static_cast<int>(state.playlist_names.size()), listHeight());
 }
 
 void UIManager::loadPlaylistPreview()
 {
-  if (state.playlists.selected < 0 || state.playlists.selected >= static_cast<int>(state.playlist_names.size()))
+  if (state.playlists.selected < 0 ||
+      state.playlists.selected >= static_cast<int>(state.playlist_names.size()))
   {
     state.playlist_preview.clear();
     state.previewed_playlist.clear();
@@ -627,7 +765,10 @@ void UIManager::loadPlaylistPreview()
 
   const std::string &name = state.playlist_names[state.playlists.selected];
   if (name == state.previewed_playlist)
+  {
     return; // only re-read when the selection actually moves
+  }
+
   state.playlist_preview.clear();
   Playlist::loadNamed(name, state.playlist_preview);
   state.previewed_playlist = name;
@@ -644,20 +785,28 @@ void UIManager::playPlaylist(const std::string &name, bool replace_queue)
   }
 
   size_t missing = Playlist::pruneMissing(entries);
+
   std::vector<SongMetadata> songs;
   songs.reserve(entries.size());
   for (const auto &entry : entries)
   {
     SongMetadata song;
     if (playlistEntrySong(entry, song))
+    {
       songs.push_back(std::move(song));
+    }
     else
+    {
       ++missing;
+    }
   }
 
   startQueued(std::move(songs), replace_queue);
+
   if (missing > 0)
+  {
     setStatus(std::to_string(missing) + " unavailable track(s) skipped in " + name);
+  }
 }
 
 bool UIManager::playlistEntrySong(const Playlist::Entry &entry, SongMetadata &out)
@@ -668,9 +817,13 @@ bool UIManager::playlistEntrySong(const Playlist::Entry &entry, SongMetadata &ou
     out = Library::loadSongMetadata(entry.path, false);
     return true;
   }
+
   // Saved from a remote queue: only playable while attached to a server.
   if (!state.source->isRemote())
+  {
     return false;
+  }
+
   out = state.source->metadata(wire);
   return true;
 }
@@ -687,7 +840,9 @@ void UIManager::savePlaylistFromQueue(const std::string &name)
   std::vector<Playlist::Entry> entries;
   entries.reserve(queue.size());
   for (const auto &song : queue)
+  {
     entries.push_back({song.song_path, song.song_name, song.duration_seconds});
+  }
 
   if (Playlist::saveNamed(name, entries))
   {
@@ -703,7 +858,9 @@ void UIManager::savePlaylistFromQueue(const std::string &name)
 bool UIManager::createPlaylist(const std::string &name)
 {
   if (name.empty())
+  {
     return false;
+  }
 
   const std::filesystem::path file = Playlist::pathForName(name);
   std::error_code ec;
@@ -720,10 +877,14 @@ bool UIManager::createPlaylist(const std::string &name)
   }
 
   refreshPlaylists();
+
   const auto it = std::find(state.playlist_names.begin(), state.playlist_names.end(), name);
   if (it != state.playlist_names.end())
+  {
     state.playlists.jump(static_cast<int>(it - state.playlist_names.begin()),
                          static_cast<int>(state.playlist_names.size()));
+  }
+
   setStatus("Created empty playlist \"" + name + "\"");
   return true;
 }
@@ -738,25 +899,38 @@ std::vector<SongMetadata> UIManager::selectionForPlaylist()
   case Tab::directory: {
     const std::string path = selectedPath();
     if (!path.empty())
+    {
       enqueuePath(path, true, songs);
+    }
     break;
   }
   case Tab::library: {
-    if (state.library.selected < 0 || state.library.selected >= static_cast<int>(state.library_rows.size()))
+    if (state.library.selected < 0 ||
+        state.library.selected >= static_cast<int>(state.library_rows.size()))
+    {
       break;
+    }
+
     const LibraryRow row = state.library_rows[state.library.selected];
     Library::Album &album = state.albums[row.album_index];
     state.source->ensureTracks(static_cast<size_t>(row.album_index), album);
+
     if (row.track_index < 0)
+    {
       songs = state.source->albumToQueue(album);
+    }
     else if (row.track_index < static_cast<int>(album.tracks.size()))
+    {
       songs.push_back(state.source->metadata(album.tracks[row.track_index].path));
+    }
     break;
   }
   case Tab::queue: {
     const auto &queue = state.player.getQueue();
     if (state.queue.selected >= 0 && state.queue.selected < static_cast<int>(queue.size()))
+    {
       songs.push_back(queue[state.queue.selected]);
+    }
     break;
   }
   case Tab::home:
@@ -764,7 +938,9 @@ std::vector<SongMetadata> UIManager::selectionForPlaylist()
   case Tab::help:
     // The playing track is the only sensible selection outside a browser.
     if (const SongMetadata *current = state.player.getCurrentSong())
+    {
       songs.push_back(*current);
+    }
     break;
   }
 
@@ -788,7 +964,9 @@ void UIManager::beginAddToPlaylist(std::vector<SongMetadata> songs)
 void UIManager::addPendingToPlaylist(const std::string &name)
 {
   if (state.pending_add.empty())
+  {
     return;
+  }
 
   std::vector<Playlist::Entry> entries;
   Playlist::loadNamed(name, entries); // absent file simply starts empty
@@ -796,7 +974,9 @@ void UIManager::addPendingToPlaylist(const std::string &name)
   const size_t added = state.pending_add.size();
   entries.reserve(entries.size() + added);
   for (const auto &song : state.pending_add)
+  {
     entries.push_back({song.song_path, song.song_name, song.duration_seconds});
+  }
 
   if (!Playlist::saveNamed(name, entries))
   {
@@ -808,13 +988,18 @@ void UIManager::addPendingToPlaylist(const std::string &name)
     state.input_mode = InputMode::PickPlaylist;
     return;
   }
+
   state.pending_add.clear();
 
   refreshPlaylists();
+
   const auto it = std::find(state.playlist_names.begin(), state.playlist_names.end(), name);
   if (it != state.playlist_names.end())
+  {
     state.playlists.jump(static_cast<int>(it - state.playlist_names.begin()),
                          static_cast<int>(state.playlist_names.size()));
+  }
+
   setStatus("Added " + std::to_string(added) + " track(s) to \"" + name + "\"");
 }
 
@@ -822,9 +1007,14 @@ void UIManager::addPendingToPlaylist(const std::string &name)
 void UIManager::commitPlaylistEdits()
 {
   if (state.previewed_playlist.empty())
+  {
     return;
+  }
+
   if (!Playlist::saveNamed(state.previewed_playlist, state.playlist_preview))
+  {
     setStatus("Could not save \"" + state.previewed_playlist + "\"");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -844,23 +1034,34 @@ void UIManager::updateHeader()
   std::ostringstream oss;
   oss << std::put_time(tm, "%H:%M:%S");
 
-  static const char *kTabNames[TAB_COUNT] = {"Home", "Library", "Directory", "Queue", "Playlists", "Help"};
+  static const char *kTabNames[TAB_COUNT] = {
+      "Home", "Library", "Directory", "Queue", "Playlists", "Help"};
+
   int x_pos = 2;
   for (int i = 0; i < TAB_COUNT; i++)
   {
     const bool active = static_cast<Tab>(i) == state.current_tab;
     if (active)
+    {
       wattron(state.header, A_REVERSE);
+    }
+
     mvwprintw(state.header, 1, x_pos, " %d %s ", i + 1, kTabNames[i]);
+
     if (active)
+    {
       wattroff(state.header, A_REVERSE);
+    }
+
     x_pos += static_cast<int>(std::string(kTabNames[i]).length()) + 5;
   }
 
   const std::string clock = oss.str();
   const int clock_x = state.max_cols - static_cast<int>(clock.size()) - 3;
   if (clock_x > x_pos)
+  {
     mvwprintw(state.header, 1, clock_x, "%s", clock.c_str());
+  }
 
   wnoutrefresh(state.header);
 }
@@ -902,22 +1103,30 @@ void UIManager::updateFooter()
     right << Util::formatDuration(state.player.getCurrentPositionSeconds()) << " / "
           << Util::formatDuration(state.player.getSongLengthSeconds()) << "  ";
   }
+
   right << "vol " << static_cast<int>(state.player.getVolume() * 100.0f + 0.5f) << "%"
-        << "  shuf " << (state.player.isShuffle() ? "on" : "off") << "  rep " << repeatLabel(state.player.getRepeat());
+        << "  shuf " << (state.player.isShuffle() ? "on" : "off") << "  rep "
+        << repeatLabel(state.player.getRepeat());
 
   const std::string right_str = right.str();
   const int right_x = state.max_cols - static_cast<int>(right_str.size()) - 2;
 
   printClipped(state.footer, 1, 2, std::max(0, right_x - 3), left);
   if (right_x > 2)
+  {
     mvwprintw(state.footer, 1, right_x, "%s", right_str.c_str());
+  }
 
   if (!state.status_message.empty())
   {
     if (std::time(nullptr) > state.status_expiry)
+    {
       state.status_message.clear();
+    }
     else
+    {
       printClipped(state.footer, 2, 2, inner, state.status_message);
+    }
   }
 
   if (state.status_message.empty())
@@ -926,11 +1135,19 @@ void UIManager::updateFooter()
     // is only issued while the footer actually has room to show it.
     const Source::ScanState scan = state.source->scanState();
     if (scan.scanning)
-      printClipped(state.footer, 2, 2, inner,
-                   "Indexing " + std::to_string(scan.done) + "/" + std::to_string(scan.total) + " - " +
-                       state.source->describe());
+    {
+      printClipped(state.footer,
+                   2,
+                   2,
+                   inner,
+                   "Indexing " + std::to_string(scan.done) + "/" + std::to_string(scan.total) +
+                       " - " + state.source->describe());
+    }
     else if (state.source->isRemote() && !state.source->alive())
-      printClipped(state.footer, 2, 2, inner, "Connection to " + state.source->describe() + " lost");
+    {
+      printClipped(
+          state.footer, 2, 2, inner, "Connection to " + state.source->describe() + " lost");
+    }
   }
 
   wnoutrefresh(state.footer);
@@ -950,9 +1167,15 @@ void UIManager::homeScreen()
   if (!current)
   {
     printClipped(state.main_area, 2, 2, state.max_cols - 4, "No track playing.");
-    printClipped(state.main_area, 4, 2, state.max_cols - 4,
+    printClipped(state.main_area,
+                 4,
+                 2,
+                 state.max_cols - 4,
                  "2 Library  browse discovered albums    3 Directory  browse files");
-    printClipped(state.main_area, 5, 2, state.max_cols - 4,
+    printClipped(state.main_area,
+                 5,
+                 2,
+                 state.max_cols - 4,
                  "5 Playlists  saved playlists           6 Help       all keybinds");
     return;
   }
@@ -970,19 +1193,30 @@ void UIManager::homeScreen()
     // a queued album would otherwise hold one full RGBA bitmap per track.
     Art::ImageData image = current->cached_image;
     if (image.pixels.empty())
+    {
       state.source->coverArt(current->song_path, image);
+    }
 
     if (!image.pixels.empty())
-      state.current_art = Art::Generate(image, state.art_color_mode, state.art_render_mode, album_width, album_height);
+    {
+      state.current_art = Art::Generate(
+          image, state.art_color_mode, state.art_render_mode, album_width, album_height);
+    }
     else
+    {
       state.current_art = Art::AsciiCanvas();
+    }
 
     // Feed the art's palette to the visualizer so the EQ renders in the
     // album's colors. Mirrors the once-per-song cadence of art generation.
     state.viz_state.has_dynamic_palette = state.current_art.has_palette;
     if (state.current_art.has_palette)
+    {
       for (int i = 0; i < 16; ++i)
+      {
         state.viz_state.dynamic_palette[i] = state.current_art.palette[i];
+      }
+    }
   }
 
   if (!state.current_art.cells.empty())
@@ -1003,9 +1237,12 @@ void UIManager::homeScreen()
   wattron(state.main_area, A_BOLD);
   printClipped(state.main_area, y, info_x, info_w, current->song_name);
   wattroff(state.main_area, A_BOLD);
+
   printClipped(state.main_area, y + 1, info_x, info_w, current->artist_name);
   if (!current->album_name.empty())
+  {
     printClipped(state.main_area, y + 2, info_x, info_w, current->album_name);
+  }
 
   const int pos = state.player.getCurrentPositionSeconds();
   const int total = state.player.getSongLengthSeconds();
@@ -1013,18 +1250,27 @@ void UIManager::homeScreen()
 
   const int bar_width = std::max(0, info_w);
   const int filled = (bar_width * percent) / 100;
+
   std::string bar;
   bar.reserve(static_cast<size_t>(bar_width) * 3);
   for (int i = 0; i < bar_width; ++i)
+  {
     bar += (i < filled) ? "\u2588" : "\u2591";
+  }
 
   printClipped(state.main_area, y + 4, info_x, info_w, bar);
-  printClipped(state.main_area, y + 5, info_x, info_w,
+  printClipped(state.main_area,
+               y + 5,
+               info_x,
+               info_w,
                Util::formatDuration(pos) + " / " + Util::formatDuration(total));
 
   const int q_index = state.player.getCurrentIndex();
   const size_t q_size = state.player.getQueueSize();
-  printClipped(state.main_area, y + 6, info_x, info_w,
+  printClipped(state.main_area,
+               y + 6,
+               info_x,
+               info_w,
                "Track " + std::to_string(q_index + 1) + " of " + std::to_string(q_size));
 
   // Visualizer / EQ: below the timer, right of the album art.
@@ -1034,8 +1280,16 @@ void UIManager::homeScreen()
     const int viz_y = y + 8;
     const int viz_h = height - viz_y - 2;
     if (info_w > 0 && viz_h > 0)
-      Visualizer::render(state.main_area, viz_y, info_x, info_w, viz_h, state.viz_state, *ring,
+    {
+      Visualizer::render(state.main_area,
+                         viz_y,
+                         info_x,
+                         info_w,
+                         viz_h,
+                         state.viz_state,
+                         *ring,
                          state.player.getSampleRate());
+    }
   }
 }
 
@@ -1045,6 +1299,7 @@ void UIManager::libraryScreen()
   const size_t scanned_albums = static_cast<size_t>(scan.albums);
   const bool scan_finished = state.last_scanning && !scan.scanning;
   state.last_scanning = scan.scanning;
+
   if (state.library_dirty || scan_finished || scanned_albums != state.last_album_count)
   {
     state.source->albums(state.albums);
@@ -1054,14 +1309,21 @@ void UIManager::libraryScreen()
     rebuildLibraryRows();
   }
 
-  std::string title = "Albums (" + std::to_string(state.albums.size()) + ") - " + state.source->describe();
+  std::string title =
+      "Albums (" + std::to_string(state.albums.size()) + ") - " + state.source->describe();
   if (scan.scanning)
+  {
     title += "  indexing " + std::to_string(scan.done) + "/" + std::to_string(scan.total);
+  }
+
   printClipped(state.main_area, 1, 2, state.max_cols - 4, title);
 
   if (state.library_rows.empty())
   {
-    printClipped(state.main_area, LIST_TOP, 2, state.max_cols - 4,
+    printClipped(state.main_area,
+                 LIST_TOP,
+                 2,
+                 state.max_cols - 4,
                  scan.scanning ? "Indexing..." : "No albums found. Press 'R' to rescan.");
     return;
   }
@@ -1074,7 +1336,9 @@ void UIManager::libraryScreen()
   {
     const int idx = state.library.scroll + row;
     if (idx >= static_cast<int>(state.library_rows.size()))
+    {
       break;
+    }
 
     const LibraryRow &lr = state.library_rows[idx];
     const Library::Album &album = state.albums[lr.album_index];
@@ -1085,7 +1349,10 @@ void UIManager::libraryScreen()
       const char *marker = state.album_expanded[lr.album_index] ? "v" : ">";
       text = std::string(marker) + " " + album.artist + " - " + album.title;
       if (album.year > 0)
+      {
         text += " (" + std::to_string(album.year) + ")";
+      }
+
       text += "  [" + std::to_string(album.track_count) + " tracks, " +
               Util::formatDuration(album.total_seconds) + "]";
     }
@@ -1093,8 +1360,10 @@ void UIManager::libraryScreen()
     {
       const Library::Track &track = album.tracks[lr.track_index];
       std::ostringstream num;
-      num << std::setw(2) << std::setfill('0') << (track.track_number > 0 ? track.track_number : lr.track_index + 1);
-      text = "    " + num.str() + "  " + track.title + "  " + Util::formatDuration(track.duration_seconds);
+      num << std::setw(2) << std::setfill('0')
+          << (track.track_number > 0 ? track.track_number : lr.track_index + 1);
+      text = "    " + num.str() + "  " + track.title + "  " +
+             Util::formatDuration(track.duration_seconds);
     }
 
     printRow(state.main_area, LIST_TOP + row, 2, width, text, idx == state.library.selected);
@@ -1110,28 +1379,42 @@ void UIManager::directoryScreen()
 
   if (state.search_results_active)
   {
-    printClipped(state.main_area, 1, 2, width,
-                 "Search \"" + state.search_query + "\" in " + state.search_root + "  (<Esc> to exit)");
+    printClipped(state.main_area,
+                 1,
+                 2,
+                 width,
+                 "Search \"" + state.search_query + "\" in " + state.search_root +
+                     "  (<Esc> to exit)");
 
     state.search_view.clamp(static_cast<int>(state.search_hits.size()), height);
     if (state.search_hits.empty())
+    {
       printClipped(state.main_area, LIST_TOP, 2, width, "No matches.");
+    }
 
     for (int row = 0; row < height; ++row)
     {
       const int idx = state.search_view.scroll + row;
       if (idx >= static_cast<int>(state.search_hits.size()))
+      {
         break;
+      }
+
       const SearchHit &hit = state.search_hits[idx];
-      printRow(state.main_area, LIST_TOP + row, 2, width, (hit.is_dir ? hit.display + "/" : hit.display),
+      printRow(state.main_area,
+               LIST_TOP + row,
+               2,
+               width,
+               (hit.is_dir ? hit.display + "/" : hit.display),
                idx == state.search_view.selected);
     }
+
     return;
   }
 
   // At a source's root the path can be empty (remote), so name the source.
-  const std::string where =
-      state.source->isRoot(state.current_directory) ? state.source->describe() : state.current_directory;
+  const std::string where = state.source->isRoot(state.current_directory) ? state.source->describe()
+                                                                          : state.current_directory;
   printClipped(state.main_area, 1, 2, width, "Directory: " + where);
 
   state.browser.clamp(static_cast<int>(state.items.size()), height);
@@ -1145,7 +1428,9 @@ void UIManager::directoryScreen()
   {
     const int idx = state.browser.scroll + row;
     if (idx >= static_cast<int>(state.items.size()))
+    {
       break;
+    }
 
     const Util::DirEntry &entry = state.items[idx];
     const std::string text = entry.is_dir ? entry.name + "/" : entry.name;
@@ -1154,8 +1439,13 @@ void UIManager::directoryScreen()
 
   if (state.items.size() > static_cast<size_t>(height))
   {
-    const std::string pos = std::to_string(state.browser.selected + 1) + "/" + std::to_string(state.items.size());
-    mvwprintw(state.main_area, 1, std::max(2, state.max_cols - static_cast<int>(pos.size()) - 3), "%s", pos.c_str());
+    const std::string pos =
+        std::to_string(state.browser.selected + 1) + "/" + std::to_string(state.items.size());
+    mvwprintw(state.main_area,
+              1,
+              std::max(2, state.max_cols - static_cast<int>(pos.size()) - 3),
+              "%s",
+              pos.c_str());
   }
 }
 
@@ -1180,14 +1470,19 @@ void UIManager::queueScreen()
   {
     const int idx = state.queue.scroll + row;
     if (idx >= static_cast<int>(queue.size()))
+    {
       break;
+    }
 
     const SongMetadata &song = queue[idx];
     std::ostringstream line;
-    line << (idx == playing ? "> " : "  ") << std::setw(3) << (idx + 1) << ". " << song.artist_name << " - "
-         << song.song_name;
+    line << (idx == playing ? "> " : "  ") << std::setw(3) << (idx + 1) << ". " << song.artist_name
+         << " - " << song.song_name;
+
     if (song.duration_seconds > 0)
+    {
       line << "  [" << Util::formatDuration(song.duration_seconds) << "]";
+    }
 
     printRow(state.main_area, LIST_TOP + row, 2, width, line.str(), idx == state.queue.selected);
   }
@@ -1202,13 +1497,23 @@ void UIManager::playlistScreen()
   const int right_w = std::max(0, state.max_cols - right_x - 2);
   const bool entries_focused = state.playlist_focus == PlaylistPane::Entries;
 
-  printClipped(state.main_area, 1, 2, left_w, "Playlists (" + std::to_string(state.playlist_names.size()) + ")");
+  printClipped(state.main_area,
+               1,
+               2,
+               left_w,
+               "Playlists (" + std::to_string(state.playlist_names.size()) + ")");
 
   if (state.playlist_names.empty())
   {
-    printClipped(state.main_area, LIST_TOP, 2, state.max_cols - 4,
+    printClipped(state.main_area,
+                 LIST_TOP,
+                 2,
+                 state.max_cols - 4,
                  "No saved playlists yet. Press 'a' to create one, or 'w' in the Queue tab");
-    printClipped(state.main_area, LIST_TOP + 1, 2, state.max_cols - 4,
+    printClipped(state.main_area,
+                 LIST_TOP + 1,
+                 2,
+                 state.max_cols - 4,
                  "to save the current queue. 'A' in any browser files tracks into one.");
     return;
   }
@@ -1220,17 +1525,27 @@ void UIManager::playlistScreen()
   {
     const int idx = state.playlists.scroll + row;
     if (idx >= static_cast<int>(state.playlist_names.size()))
+    {
       break;
+    }
+
     // Only the focused pane shows a cursor, so it is always obvious which
     // list j/k and 'd' are about to act on.
-    printRow(state.main_area, LIST_TOP + row, 2, left_w, state.playlist_names[idx],
+    printRow(state.main_area,
+             LIST_TOP + row,
+             2,
+             left_w,
+             state.playlist_names[idx],
              idx == state.playlists.selected && !entries_focused);
   }
 
   for (int row = 0; row < height; ++row)
+  {
     mvwaddch(state.main_area, LIST_TOP + row, split, ACS_VLINE);
+  }
 
-  std::string right_title = state.previewed_playlist + " (" + std::to_string(state.playlist_preview.size()) + ")";
+  std::string right_title =
+      state.previewed_playlist + " (" + std::to_string(state.playlist_preview.size()) + ")";
   right_title += entries_focused ? "  <Left> back" : "  <Right> edit";
   printClipped(state.main_area, 1, right_x, right_w, right_title);
 
@@ -1246,13 +1561,24 @@ void UIManager::playlistScreen()
   {
     const int idx = state.playlist_entries.scroll + row;
     if (idx >= static_cast<int>(state.playlist_preview.size()))
+    {
       break;
+    }
+
     const Playlist::Entry &entry = state.playlist_preview[idx];
-    std::string label = entry.title.empty() ? std::filesystem::path(entry.path).filename().string() : entry.title;
+    std::string label =
+        entry.title.empty() ? std::filesystem::path(entry.path).filename().string() : entry.title;
     label = std::to_string(idx + 1) + ". " + label;
     if (entry.duration_seconds > 0)
+    {
       label += "  [" + Util::formatDuration(entry.duration_seconds) + "]";
-    printRow(state.main_area, LIST_TOP + row, right_x, right_w, label,
+    }
+
+    printRow(state.main_area,
+             LIST_TOP + row,
+             right_x,
+             right_w,
+             label,
              entries_focused && idx == state.playlist_entries.selected);
   }
 }
@@ -1271,26 +1597,35 @@ void UIManager::drawPlaylistPicker()
   const int visible = win_h - 4;
 
   for (int y = 0; y < win_h; ++y)
+  {
     for (int x = 0; x < win_w; ++x)
+    {
       mvwaddch(state.main_area, top + y, left + x, ' ');
+    }
+  }
 
   // Manual border: this is a region inside main_area, not its own WINDOW.
   mvwaddch(state.main_area, top, left, ACS_ULCORNER);
   mvwaddch(state.main_area, top, left + win_w - 1, ACS_URCORNER);
   mvwaddch(state.main_area, top + win_h - 1, left, ACS_LLCORNER);
   mvwaddch(state.main_area, top + win_h - 1, left + win_w - 1, ACS_LRCORNER);
+
   for (int x = 1; x < win_w - 1; ++x)
   {
     mvwaddch(state.main_area, top, left + x, ACS_HLINE);
     mvwaddch(state.main_area, top + win_h - 1, left + x, ACS_HLINE);
   }
+
   for (int y = 1; y < win_h - 1; ++y)
   {
     mvwaddch(state.main_area, top + y, left, ACS_VLINE);
     mvwaddch(state.main_area, top + y, left + win_w - 1, ACS_VLINE);
   }
 
-  printClipped(state.main_area, top + 1, left + 2, inner_w,
+  printClipped(state.main_area,
+               top + 1,
+               left + 2,
+               inner_w,
                "Add " + std::to_string(state.pending_add.size()) + " track(s) to:");
 
   state.picker.clamp(rows, visible);
@@ -1298,9 +1633,13 @@ void UIManager::drawPlaylistPicker()
   {
     const int idx = state.picker.scroll + row;
     if (idx >= rows)
+    {
       break;
+    }
+
     const std::string label = idx == 0 ? "[+ new playlist]" : state.playlist_names[idx - 1];
-    printRow(state.main_area, top + 2 + row, left + 2, inner_w, label, idx == state.picker.selected);
+    printRow(
+        state.main_area, top + 2 + row, left + 2, inner_w, label, idx == state.picker.selected);
   }
 
   printClipped(state.main_area, top + win_h - 2, left + 2, inner_w, "<Enter> add   <Esc> cancel");
@@ -1378,14 +1717,20 @@ void UIManager::helpScreen()
 
   std::string title = "Help - config: " + Config::configPath().string();
   if (max_scroll > 0)
+  {
     title += "   (j/k to scroll)";
+  }
+
   printClipped(state.main_area, 1, 2, width, title);
 
   for (int row = 0; row < height; ++row)
   {
     const int idx = state.help.scroll + row;
     if (idx >= kHelpCount)
+    {
       break;
+    }
+
     printClipped(state.main_area, LIST_TOP + row, 2, width, kHelpLines[idx]);
   }
 }
@@ -1418,7 +1763,9 @@ void UIManager::updateMainArea()
   }
 
   if (state.input_mode == InputMode::PickPlaylist)
+  {
     drawPlaylistPicker();
+  }
 
   wnoutrefresh(state.main_area);
 }
@@ -1428,7 +1775,12 @@ void UIManager::render()
   if (state.max_rows < MIN_ROWS || state.max_cols < MIN_COLS)
   {
     werase(stdscr);
-    mvprintw(0, 0, "Terminal too small (%dx%d); need at least %dx%d", state.max_cols, state.max_rows, MIN_COLS,
+    mvprintw(0,
+             0,
+             "Terminal too small (%dx%d); need at least %dx%d",
+             state.max_cols,
+             state.max_rows,
+             MIN_COLS,
              MIN_ROWS);
     wnoutrefresh(stdscr);
     doupdate();
@@ -1449,6 +1801,7 @@ void UIManager::submitPrompt()
 {
   const InputMode mode = state.input_mode;
   const std::string text = state.input_buffer;
+
   state.input_mode = InputMode::Normal;
   state.input_buffer.clear();
   state.prompt_label.clear();
@@ -1460,7 +1813,9 @@ void UIManager::submitPrompt()
     break;
   case InputMode::SavePlaylist:
     if (!text.empty())
+    {
       savePlaylistFromQueue(text);
+    }
     break;
   case InputMode::RenamePlaylist:
     if (!text.empty() && state.playlists.selected < static_cast<int>(state.playlist_names.size()))
@@ -1482,9 +1837,13 @@ void UIManager::submitPrompt()
     break;
   case InputMode::NamePlaylistForAdd:
     if (text.empty())
+    {
       state.pending_add.clear();
+    }
     else
+    {
       addPendingToPlaylist(text);
+    }
     break;
   case InputMode::PickPlaylist:
   case InputMode::Confirm:
@@ -1520,9 +1879,11 @@ void UIManager::handlePromptKey(int ch)
       case ConfirmAction::RemovePlaylistEntry:
         if (state.playlist_entries.selected < static_cast<int>(state.playlist_preview.size()))
         {
-          state.playlist_preview.erase(state.playlist_preview.begin() + state.playlist_entries.selected);
+          state.playlist_preview.erase(state.playlist_preview.begin() +
+                                       state.playlist_entries.selected);
           commitPlaylistEdits();
-          state.playlist_entries.clamp(static_cast<int>(state.playlist_preview.size()), listHeight());
+          state.playlist_entries.clamp(static_cast<int>(state.playlist_preview.size()),
+                                       listHeight());
           setStatus("Removed from \"" + state.previewed_playlist + "\"");
         }
         break;
@@ -1530,6 +1891,7 @@ void UIManager::handlePromptKey(int ch)
         break;
       }
     }
+
     state.confirm_action = ConfirmAction::None;
     state.input_mode = InputMode::Normal;
     state.prompt_label.clear();
@@ -1552,14 +1914,18 @@ void UIManager::handlePromptKey(int ch)
   case 127:
   case 8:
     if (!state.input_buffer.empty())
+    {
       state.input_buffer.pop_back();
+    }
     return;
   default:
     break;
   }
 
   if (ch >= 32 && ch < 127 && state.input_buffer.size() < 120)
+  {
     state.input_buffer.push_back(static_cast<char>(ch));
+  }
 }
 
 void UIManager::handlePickerKey(int ch)
@@ -1567,7 +1933,9 @@ void UIManager::handlePickerKey(int ch)
   const int rows = static_cast<int>(state.playlist_names.size()) + 1; // +1 for "[+ new playlist]"
 
   if (handleListNavKey(ch, state.picker, rows, std::max(1, getmaxy(state.main_area) - 6)))
+  {
     return;
+  }
 
   switch (ch)
   {
@@ -1685,11 +2053,13 @@ void UIManager::handleGlobalKey(int ch)
     return;
   case '0':
     state.player.adjustVolume(0.05f);
-    setStatus("Volume " + std::to_string(static_cast<int>(state.player.getVolume() * 100.0f + 0.5f)) + "%");
+    setStatus("Volume " +
+              std::to_string(static_cast<int>(state.player.getVolume() * 100.0f + 0.5f)) + "%");
     return;
   case '9':
     state.player.adjustVolume(-0.05f);
-    setStatus("Volume " + std::to_string(static_cast<int>(state.player.getVolume() * 100.0f + 0.5f)) + "%");
+    setStatus("Volume " +
+              std::to_string(static_cast<int>(state.player.getVolume() * 100.0f + 0.5f)) + "%");
     return;
   case 's':
     state.player.toggleShuffle();
@@ -1701,13 +2071,15 @@ void UIManager::handleGlobalKey(int ch)
     return;
 
   case 'a':
-    state.art_color_mode =
-        (state.art_color_mode == Art::ColorMode::ANSI_256) ? Art::ColorMode::GRAYSCALE : Art::ColorMode::ANSI_256;
+    state.art_color_mode = (state.art_color_mode == Art::ColorMode::ANSI_256)
+                               ? Art::ColorMode::GRAYSCALE
+                               : Art::ColorMode::ANSI_256;
     state.cached_song_path.clear(); // force art regen on next frame
     return;
   case 'z':
-    state.art_render_mode =
-        (state.art_render_mode == Art::RenderMode::BLOCK) ? Art::RenderMode::DETAILED : Art::RenderMode::BLOCK;
+    state.art_render_mode = (state.art_render_mode == Art::RenderMode::BLOCK)
+                                ? Art::RenderMode::DETAILED
+                                : Art::RenderMode::BLOCK;
     state.cached_song_path.clear();
     return;
   case 'v':
@@ -1726,12 +2098,14 @@ void UIManager::handleGlobalKey(int ch)
       state.viz_state.style = Visualizer::Style::BLOCK;
       break;
     }
+
     state.viz_state.analyzer.bar_count = 0; // force binning reconfigure
     setStatus("Visualizer: " + Visualizer::styleName(state.viz_state.style));
     return;
   case 'c':
     state.viz_state.use_dynamic_palette = !state.viz_state.use_dynamic_palette;
-    setStatus(std::string("Visualizer palette: ") + (state.viz_state.use_dynamic_palette ? "album art" : "fixed"));
+    setStatus(std::string("Visualizer palette: ") +
+              (state.viz_state.use_dynamic_palette ? "album art" : "fixed"));
     return;
   default:
     return;
@@ -1746,7 +2120,9 @@ bool UIManager::handleDirectoryKey(int ch)
                                                 : static_cast<int>(state.items.size());
 
   if (handleListNavKey(ch, view, count, height))
+  {
     return true;
+  }
 
   switch (ch)
   {
@@ -1770,9 +2146,13 @@ bool UIManager::handleDirectoryKey(int ch)
     return true;
   case 27: // ESC
     if (state.search_results_active)
+    {
       state.search_results_active = false;
+    }
     else
+    {
       openParentDirectory();
+    }
     return true;
   case '/':
     state.input_mode = InputMode::Search;
@@ -1794,7 +2174,9 @@ bool UIManager::handleLibraryKey(int ch)
   const int count = static_cast<int>(state.library_rows.size());
 
   if (handleListNavKey(ch, state.library, count, height))
+  {
     return true;
+  }
 
   if (ch == 'R')
   {
@@ -1805,7 +2187,9 @@ bool UIManager::handleLibraryKey(int ch)
   }
 
   if (count == 0 || state.library.selected >= count)
+  {
     return false;
+  }
 
   const LibraryRow row = state.library_rows[state.library.selected];
   Library::Album &album = state.albums[row.album_index];
@@ -1824,6 +2208,7 @@ bool UIManager::handleLibraryKey(int ch)
         setStatus("Could not read tracks for " + album.title);
         return true;
       }
+
       state.album_expanded[row.album_index] = !state.album_expanded[row.album_index];
       rebuildLibraryRows();
     }
@@ -1867,14 +2252,18 @@ bool UIManager::handleQueueKey(int ch)
   const int count = static_cast<int>(state.player.getQueueSize());
 
   if (handleListNavKey(ch, state.queue, count, height))
+  {
     return true;
+  }
 
   switch (ch)
   {
   case '\n':
   case KEY_ENTER:
     if (count > 0)
+    {
       state.player.playIndex(state.queue.selected);
+    }
     return true;
   case 'd':
     if (count > 0 && state.player.removeAt(state.queue.selected))
@@ -1888,11 +2277,15 @@ bool UIManager::handleQueueKey(int ch)
     return true;
   case 'J':
     if (state.player.moveItem(state.queue.selected, state.queue.selected + 1))
+    {
       state.queue.move(1, count, false);
+    }
     return true;
   case 'K':
     if (state.player.moveItem(state.queue.selected, state.queue.selected - 1))
+    {
       state.queue.move(-1, count, false);
+    }
     return true;
   case 'X':
     if (count > 0)
@@ -1932,13 +2325,17 @@ bool UIManager::handlePlaylistKey(int ch)
     state.input_buffer.clear();
     return true;
   }
+
   if (ch == 'A')
   {
     beginAddToPlaylist(selectionForPlaylist());
     return true;
   }
+
   if (count == 0)
+  {
     return false;
+  }
 
   // The right pane is a real editor, not a preview: focus it to reorder or
   // drop tracks. Arrows move focus here; h/l stay global tab switching.
@@ -1951,10 +2348,16 @@ bool UIManager::handlePlaylistKey(int ch)
       state.playlist_focus = PlaylistPane::List;
       return true;
     }
+
     if (handleListNavKey(ch, state.playlist_entries, entries, height))
+    {
       return true;
+    }
+
     if (entries == 0 || state.playlist_entries.selected >= entries)
+    {
       return false;
+    }
 
     switch (ch)
     {
@@ -1998,10 +2401,16 @@ bool UIManager::handlePlaylistKey(int ch)
     state.playlist_entries.reset();
     return true;
   }
+
   if (handleListNavKey(ch, state.playlists, count, height))
+  {
     return true;
+  }
+
   if (state.playlists.selected >= count)
+  {
     return false;
+  }
 
   const std::string name = state.playlist_names[state.playlists.selected];
 
@@ -2042,6 +2451,7 @@ void UIManager::handleKey(int ch)
     handlePickerKey(ch);
     return;
   }
+
   if (state.input_mode != InputMode::Normal)
   {
     handlePromptKey(ch);
@@ -2084,7 +2494,9 @@ void UIManager::handleKey(int ch)
   }
 
   if (!consumed)
+  {
     handleGlobalKey(ch);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2096,6 +2508,7 @@ void UIManager::run()
   Util::debugPrint("Starting TUI event loop");
 
   const int frame_ms = std::max(1, 1000 / std::clamp(state.cfg.fps, 5, 120));
+
   // Blocking read with a frame-length timeout: the old loop spun with
   // nodelay + napms(5), burning a core to redraw 200x/second.
   keypad(stdscr, TRUE);
@@ -2119,9 +2532,11 @@ void UIManager::run()
           running = false;
           break;
         }
+
         handleKey(ch);
         ch = getch();
       } while (ch != ERR);
+
       timeout(frame_ms);
     }
 

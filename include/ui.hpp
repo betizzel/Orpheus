@@ -36,13 +36,13 @@ enum class Tab
 enum class InputMode
 {
   Normal,
-  Search,         ///< '/' in the directory browser
-  SavePlaylist,   ///< 'w' in the queue
-  RenamePlaylist, ///< 'R' in the playlists tab
-  NewPlaylist,    ///< 'a' in the playlists tab: create an empty one
+  Search,             ///< '/' in the directory browser
+  SavePlaylist,       ///< 'w' in the queue
+  RenamePlaylist,     ///< 'R' in the playlists tab
+  NewPlaylist,        ///< 'a' in the playlists tab: create an empty one
   NamePlaylistForAdd, ///< picked "new playlist" while adding tracks
-  PickPlaylist,   ///< 'A' anywhere: choose the playlist to add to
-  Confirm         ///< y/n question
+  PickPlaylist,       ///< 'A' anywhere: choose the playlist to add to
+  Confirm             ///< y/n question
 };
 
 /// What a pending Confirm answers.
@@ -77,8 +77,10 @@ struct ListView
 
   /// Move by delta, wrapping past either end (todo item: top -> bottom).
   void move(int delta, int count, bool wrap = true);
+
   /// Jump to an absolute index.
   void jump(int index, int count);
+
   /// Clamp selection/scroll so `selected` is visible in a `height`-row viewport.
   void clamp(int count, int height);
 };
@@ -93,8 +95,8 @@ struct LibraryRow
 /// A hit from the recursive '/' search in the directory browser.
 struct SearchHit
 {
-  std::string path;     ///< absolute
-  std::string display;  ///< path relative to the search root
+  std::string path;    ///< absolute
+  std::string display; ///< path relative to the search root
   bool is_dir = false;
 };
 
@@ -120,9 +122,11 @@ struct UI
   std::string music_root;
   std::string current_directory;
   std::string last_listed_directory;
+
   /// Explicit flag instead of comparing paths: the remote root is "", which
   /// equals the initial last_listed_directory and would look already-listed.
   bool listing_valid = false;
+
   std::vector<Util::DirEntry> items;
   ListView browser;
 
@@ -140,6 +144,7 @@ struct UI
   ListView library;
   bool library_dirty = true;
   size_t last_album_count = 0;
+
   /// Scanning flag as of the last library render
   bool last_scanning = false;
 
@@ -148,8 +153,10 @@ struct UI
 
   // playlists
   std::vector<std::string> playlist_names;
-  std::vector<Playlist::Entry> playlist_preview; ///< entries of `previewed_playlist`, edited in place
+  std::vector<Playlist::Entry>
+      playlist_preview; ///< entries of `previewed_playlist`, edited in place
   std::string previewed_playlist;
+
   ListView playlists;
   ListView playlist_entries;
   PlaylistPane playlist_focus = PlaylistPane::List;
@@ -198,7 +205,9 @@ public:
   UIManager();
   ~UIManager();
 
-  void init(const Config::Settings &cfg, std::unique_ptr<Source::Provider> source, ma_vfs *vfs = nullptr);
+  void init(const Config::Settings &cfg,
+            std::unique_ptr<Source::Provider> source,
+            ma_vfs *vfs = nullptr);
   void cleanup();
   void run();
 
@@ -230,11 +239,13 @@ private:
   void handlePromptKey(int ch);
   void handlePickerKey(int ch);
   void handleGlobalKey(int ch);
+
   bool handleDirectoryKey(int ch);
   bool handleLibraryKey(int ch);
   bool handleQueueKey(int ch);
   bool handlePlaylistKey(int ch);
   bool handleListNavKey(int ch, ListView &view, int count, int height);
+
   void submitPrompt();
 
   // actions
@@ -243,19 +254,24 @@ private:
   void enqueueSelection(bool replace_queue);
   void openParentDirectory();
   void runSearch(const std::string &query);
+
   void rebuildLibraryRows();
+
   void refreshPlaylists();
   void loadPlaylistPreview();
   void playPlaylist(const std::string &name, bool replace_queue);
+
   /// Queue entry for a playlist line, false when it names a remote track
   /// that the active source cannot serve.
   bool playlistEntrySong(const Playlist::Entry &entry, SongMetadata &out);
+
   void savePlaylistFromQueue(const std::string &name);
   bool createPlaylist(const std::string &name);
   void beginAddToPlaylist(std::vector<SongMetadata> songs);
   void addPendingToPlaylist(const std::string &name);
   void commitPlaylistEdits();
   std::vector<SongMetadata> selectionForPlaylist();
+
   void enqueuePath(const std::string &path, bool recursive, std::vector<SongMetadata> &out);
   void startQueued(std::vector<SongMetadata> songs, bool replace_queue);
   void setStatus(const std::string &message);

@@ -83,7 +83,8 @@ bool LoadImageMemory(ImageData &out, const uint8_t *data, size_t length);
  * @param max_rows Maximum rows available in the terminal pane.
  * @return Populated AsciiCanvas ready for ncurses rendering.
  */
-AsciiCanvas Generate(const ImageData &image, ColorMode mode, RenderMode rmode, int max_cols, int max_rows);
+AsciiCanvas Generate(
+    const ImageData &image, ColorMode mode, RenderMode rmode, int max_cols, int max_rows);
 
 /**
  * @brief Get a single pixel's RGB from ImageData at (x, y).

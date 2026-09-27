@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-generate_sbom.py — CycloneDX SBOM generator for CMake C/C++ projects.
+generate_sbom.py: CycloneDX SBOM generator for CMake C/C++ projects.
 
 Uses the official cyclonedx-python-lib to produce the BOM.
 
 Two-phase approach:
-  1. Static analysis  — parse CMakeLists.txt for find_package /
+  1. Static analysis:   parse CMakeLists.txt for find_package /
                         pkg_check_modules / target_link_libraries.
-  2. Dynamic analysis — drive cmake + make/ninja with verbose output, scrape
+  2. Dynamic analysis:  drive cmake + make/ninja with verbose output, scrape
                         linker command-lines for -l<lib> flags actually used.
 
 Usage:

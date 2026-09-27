@@ -16,7 +16,8 @@ namespace Art
 {
 
 /* Private helpers used in Generate() */
-static uint32_t GetPixelRGBFromBuffer(const std::vector<unsigned char> &buf, int width, int height, int x, int y);
+static uint32_t GetPixelRGBFromBuffer(
+    const std::vector<unsigned char> &buf, int width, int height, int x, int y);
 static int GrayscaleIndex(uint32_t rgb);
 
 /* *
@@ -26,13 +27,20 @@ static int GrayscaleIndex(uint32_t rgb);
 std::string ResolveImage(const std::string &song_path)
 {
   std::filesystem::path image_path(song_path);
-  std::vector<std::string> possible_names = {"cover.jpg", "cover.png", "front.jpg",  "front.png",
-                                             "album.jpg", "album.png", "folder.jpg", "folder.png"};
+  std::vector<std::string> possible_names = {"cover.jpg",
+                                             "cover.png",
+                                             "front.jpg",
+                                             "front.png",
+                                             "album.jpg",
+                                             "album.png",
+                                             "folder.jpg",
+                                             "folder.png"};
 
   for (std::string name : possible_names)
   {
     image_path.replace_filename(name);
     struct stat buffer;
+
     if (stat(image_path.string().c_str(), &buffer) == 0)
     {
       return image_path.string();
@@ -51,6 +59,7 @@ bool LoadImageFile(ImageData &out, const std::string &path)
 {
   int w, h, ch;
   unsigned char *data = stbi_load(path.c_str(), &w, &h, &ch, 4);
+
   if (!data)
   {
     return false;
@@ -61,6 +70,7 @@ bool LoadImageFile(ImageData &out, const std::string &path)
   out.height = h;
   out.channels = 4;
   stbi_image_free(data);
+
   return true;
 }
 
@@ -85,6 +95,7 @@ bool LoadImageMemory(ImageData &out, const uint8_t *data, size_t length)
   out.height = h;
   out.channels = 4;
   stbi_image_free(img);
+
   return true;
 }
 
@@ -106,7 +117,8 @@ uint32_t GetPixelRGB(const ImageData &img, int x, int y)
   uint8_t g = img.pixels[idx + 1];
   uint8_t b = img.pixels[idx + 2];
 
-  return ((static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b));
+  return ((static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) |
+          static_cast<uint32_t>(b));
 }
 
 /* *
@@ -124,6 +136,7 @@ static void extractPalette(const std::vector<unsigned char> &resized, int w, int
     int count = 0;
     double lum_sum = 0.0;
   };
+
   std::map<int, Entry> buckets;
 
   for (int y = 0; y < h; ++y)
@@ -135,8 +148,10 @@ static void extractPalette(const std::vector<unsigned char> &resized, int w, int
       uint8_t g = resized[idx + 1];
       uint8_t b = resized[idx + 2];
       uint32_t rgb = (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
+
       int ansi = RGBToANSI256(rgb);
       float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+
       auto &e = buckets[ansi];
       e.count++;
       e.lum_sum += lum;
@@ -146,15 +161,24 @@ static void extractPalette(const std::vector<unsigned char> &resized, int w, int
   // Sort unique ANSI colors by average luminance ascending.
   std::vector<std::pair<float, int>> sorted; // (avg_lum, ansi)
   sorted.reserve(buckets.size());
+
   for (const auto &kv : buckets)
+  {
     sorted.emplace_back(static_cast<float>(kv.second.lum_sum / kv.second.count), kv.first);
-  std::sort(sorted.begin(), sorted.end(),
-            [](const auto &a, const auto &b) { return a.first < b.first; });
+  }
+
+  std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
+    return a.first < b.first;
+  });
 
   const int N = static_cast<int>(sorted.size());
   if (N == 0)
   {
-    for (int i = 0; i < 16; ++i) out[i] = 235;
+    for (int i = 0; i < 16; ++i)
+    {
+      out[i] = 235;
+    }
+
     return;
   }
 
@@ -164,10 +188,16 @@ static void extractPalette(const std::vector<unsigned char> &resized, int w, int
   for (int i = 0; i < 16; ++i)
   {
     int pick;
+
     if (N <= 16)
+    {
       pick = std::min(i, N - 1);
+    }
     else
+    {
       pick = (i * N) / 16;
+    }
+
     out[i] = sorted[pick].second;
   }
 }
@@ -179,7 +209,8 @@ static void extractPalette(const std::vector<unsigned char> &resized, int w, int
  * @param @max_cols : max cols of displayable screen space
  * @param @max_rows : max rows of displayable screen space
  * */
-AsciiCanvas Generate(const ImageData &image, ColorMode mode, RenderMode rmode, int max_cols, int max_rows)
+AsciiCanvas Generate(
+    const ImageData &image, ColorMode mode, RenderMode rmode, int max_cols, int max_rows)
 {
   AsciiCanvas canvas;
   canvas.mode = mode;
@@ -216,7 +247,14 @@ AsciiCanvas Generate(const ImageData &image, ColorMode mode, RenderMode rmode, i
   std::vector<unsigned char> resized(target_w * resize_h * 4);
 
   // resize the image according to oure desired target sizes
-  stbir_resize_uint8_linear(image.pixels.data(), image.width, image.height, 0, resized.data(), target_w, resize_h, 0,
+  stbir_resize_uint8_linear(image.pixels.data(),
+                            image.width,
+                            image.height,
+                            0,
+                            resized.data(),
+                            target_w,
+                            resize_h,
+                            0,
                             static_cast<stbir_pixel_layout>(4));
 
   // preallocate memory for the image area
@@ -257,8 +295,10 @@ AsciiCanvas Generate(const ImageData &image, ColorMode mode, RenderMode rmode, i
           break;
         }
         break;
+
       case Art::RenderMode::DETAILED:
         cell.ch = MapRGBToChar(top_rgb);
+
         // detailed .,:/|!#@$*
         switch (mode)
         {
@@ -295,7 +335,8 @@ AsciiCanvas Generate(const ImageData &image, ColorMode mode, RenderMode rmode, i
  * @param @x : location of pixel on x coord
  * @param @y : location of pixel on y coord
  * */
-static uint32_t GetPixelRGBFromBuffer(const std::vector<unsigned char> &buf, int width, int height, int x, int y)
+static uint32_t GetPixelRGBFromBuffer(
+    const std::vector<unsigned char> &buf, int width, int height, int x, int y)
 {
   // skip out of bounds
   if (x < 0 || x >= width || y < 0 || y >= height)
@@ -305,6 +346,7 @@ static uint32_t GetPixelRGBFromBuffer(const std::vector<unsigned char> &buf, int
 
   // find the location
   size_t idx = (static_cast<size_t>(y) * width + x) * 4;
+
   // extract it in 3 different variables
   uint8_t r = buf[idx];
   uint8_t g = buf[idx + 1];
@@ -312,7 +354,8 @@ static uint32_t GetPixelRGBFromBuffer(const std::vector<unsigned char> &buf, int
 
   // return it as a cast for one unint32_t var holding all of the information
   // (shifted by 16, 8, 0) for the data to fit
-  return (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
+  return (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) |
+         static_cast<uint32_t>(b);
 }
 
 /* *
@@ -384,6 +427,7 @@ char MapRGBToChar(uint32_t rgb)
   {
     index = 0;
   }
+
   if (index > 9)
   {
     index = 9;

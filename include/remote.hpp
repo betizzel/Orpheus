@@ -1,4 +1,4 @@
-// remote.hpp — the client half of remote playback.
+// remote.hpp: the client half of remote playback.
 #pragma once
 
 #include "art.hpp"
@@ -51,23 +51,35 @@ public:
 
   /**
    * @brief Spawn `ssh [extra_args...] <host> -- <remote_command>` and handshake.
-   * @param extra_args options passed straight to ssh, e.g. {"-p","2222"}, {"-i","/path/key"} or {"-J","bastion"}.
-   *        Needed for anything that isn't a plain ~/.ssh/config host.
+   * @param extra_args options passed straight to ssh, e.g. {"-p","2222"}, {"-i","/path/key"} or
+   * {"-J","bastion"}. Needed for anything that isn't a plain ~/.ssh/config host.
    * @return nullptr on failure, with `error` describing why.
    */
-  static std::unique_ptr<Session> connectSsh(const std::string &host, const std::string &remote_command,
-                                             const std::vector<std::string> &extra_args, std::string &error);
+  static std::unique_ptr<Session> connectSsh(const std::string &host,
+                                             const std::string &remote_command,
+                                             const std::vector<std::string> &extra_args,
+                                             std::string &error);
 
   /// Connect to a local orpheusd Unix socket and handshake.
-  static std::unique_ptr<Session> connectUnix(const std::filesystem::path &socket_path, std::string &error);
+  static std::unique_ptr<Session> connectUnix(const std::filesystem::path &socket_path,
+                                              std::string &error);
 
   /// Adopt an already-connected transport (used by tests).
-  static std::unique_ptr<Session> adopt(std::unique_ptr<Proto::Stream> stream, const std::string &description,
+  static std::unique_ptr<Session> adopt(std::unique_ptr<Proto::Stream> stream,
+                                        const std::string &description,
                                         std::string &error);
 
   bool alive() const;
-  const std::string &label() const { return label_; }
-  const std::string &describe() const { return description_; }
+
+  const std::string &label() const
+  {
+    return label_;
+  }
+
+  const std::string &describe() const
+  {
+    return description_;
+  }
 
   bool list(const std::string &path, std::vector<Util::DirEntry> &out);
   bool tags(const std::string &path, SongMetadata &out);
@@ -89,17 +101,21 @@ private:
   Session() = default;
 
   bool handshake(std::string &error);
+
   /// Send one request line and read the status line back. Caller holds lock_.
   bool exchange(const std::string &request, std::string &response);
   bool readPayload(const std::string &response, std::vector<unsigned char> &out, bool &had_payload);
+
   /// Framing error mid-response: unread bytes are still in the stream, so
   /// every later reply would be misaligned. Close it and report failure.
   bool abandon();
 
   mutable std::mutex lock_;
   std::unique_ptr<Proto::Stream> stream_;
+
   std::string label_;
   std::string description_;
+
   uint64_t requests_ = 0;
   pid_t child_ = -1; ///< ssh process, reaped in the destructor
 };
@@ -128,6 +144,7 @@ public:
 
   static constexpr const char *kScheme = "orpheus://";
   static std::string url(const std::string &wire_path);
+
   /// returns false when `uri` is not a remote URL.
   static bool parse(const char *uri, std::string &wire_path);
 

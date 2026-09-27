@@ -1,4 +1,4 @@
-// orpheusd — serves a music library to a remote Orpheus client.
+// orpheusd: serves a music library to a remote Orpheus client.
 //
 // The daemon never decodes or plays anything. It hands out directory
 // listings, tags, cover-art bytes and raw byte ranges; the client does all
@@ -56,7 +56,10 @@ std::string defaultLabel()
 {
   char host[256] = {0};
   if (::gethostname(host, sizeof(host) - 1) == 0 && host[0] != '\0')
+  {
     return host;
+  }
+
   return "orpheusd";
 }
 
@@ -77,15 +80,25 @@ int main(int argc, char **argv)
     const bool has_value = (i + 1) < argc;
 
     if (arg == "--stdio")
+    {
       use_stdio = true;
+    }
     else if (arg == "--socket" && has_value)
+    {
       socket_path = argv[++i];
+    }
     else if (arg == "--root" && has_value)
+    {
       opts.root = Util::expandHome(argv[++i]);
+    }
     else if (arg == "--label" && has_value)
+    {
       opts.label = argv[++i];
+    }
     else if (arg == "--no-scan")
+    {
       opts.scan_on_start = false;
+    }
     else if (arg == "--help" || arg == "-h")
     {
       usage();
@@ -95,6 +108,7 @@ int main(int argc, char **argv)
     {
       std::cerr << "orpheusd: unknown argument '" << arg << "'\n\n";
       usage();
+
       return 2;
     }
   }
@@ -103,12 +117,15 @@ int main(int argc, char **argv)
   {
     std::cerr << "orpheusd: --stdio and --socket are mutually exclusive\n\n";
     usage();
+
     return 2;
   }
+
   if (!use_stdio && socket_path.empty())
   {
     std::cerr << "orpheusd: pick one of --stdio or --socket <path>\n\n";
     usage();
+
     return 2;
   }
 

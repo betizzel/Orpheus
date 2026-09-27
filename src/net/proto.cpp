@@ -26,11 +26,20 @@ inline bool needsEscape(unsigned char c)
 inline int hexValue(char c)
 {
   if (c >= '0' && c <= '9')
+  {
     return c - '0';
+  }
+
   if (c >= 'a' && c <= 'f')
+  {
     return c - 'a' + 10;
+  }
+
   if (c >= 'A' && c <= 'F')
+  {
     return c - 'A' + 10;
+  }
+
   return -1;
 }
 
@@ -42,6 +51,7 @@ std::string encodeField(std::string_view raw)
 
   std::string out;
   out.reserve(raw.size());
+
   for (char ch : raw)
   {
     const unsigned char c = static_cast<unsigned char>(ch);
@@ -59,7 +69,10 @@ std::string encodeField(std::string_view raw)
 
   // An empty field would vanish into the space separator if not treated correctly.
   if (out.empty())
+  {
     out = "%00";
+  }
+
   return out;
 }
 
@@ -67,10 +80,13 @@ std::string decodeField(std::string_view wire)
 {
   // empty field
   if (wire == "%00")
+  {
     return {};
+  }
 
   std::string out;
   out.reserve(wire.size());
+
   for (size_t i = 0; i < wire.size(); ++i)
   {
     if (wire[i] != '%' || i + 2 >= wire.size())
@@ -81,6 +97,7 @@ std::string decodeField(std::string_view wire)
 
     const int hi = hexValue(wire[i + 1]);
     const int lo = hexValue(wire[i + 2]);
+
     if (hi < 0 || lo < 0)
     {
       // Malformed escape: keep the byte rather than failing. A hostile peer
@@ -92,6 +109,7 @@ std::string decodeField(std::string_view wire)
     out.push_back(static_cast<char>((hi << 4) | lo));
     i += 2;
   }
+
   return out;
 }
 
@@ -99,17 +117,28 @@ std::vector<std::string_view> splitFields(std::string_view line, size_t max_fiel
 {
   std::vector<std::string_view> fields;
   size_t i = 0;
+
   while (i < line.size() && fields.size() < max_fields)
   {
     while (i < line.size() && line[i] == ' ')
+    {
       ++i;
+    }
+
     if (i >= line.size())
+    {
       break;
+    }
+
     const size_t start = i;
     while (i < line.size() && line[i] != ' ')
+    {
       ++i;
+    }
+
     fields.push_back(line.substr(start, i - start));
   }
+
   return fields;
 }
 
@@ -117,28 +146,42 @@ bool sanitizeWirePath(std::string_view relative, std::string &out)
 {
   out.clear();
   if (relative.find('\0') != std::string_view::npos)
+  {
     return false;
+  }
+
   if (!relative.empty() && relative.front() == '/')
+  {
     return false;
+  }
 
   std::vector<std::string_view> parts;
   size_t i = 0;
+
   while (i < relative.size())
   {
     while (i < relative.size() && relative[i] == '/')
+    {
       ++i;
+    }
 
     const size_t start = i;
 
     while (i < relative.size() && relative[i] != '/')
+    {
       ++i;
+    }
 
     if (i == start)
+    {
       break;
+    }
 
     const std::string_view part = relative.substr(start, i - start);
     if (part == ".")
+    {
       continue;
+    }
 
     if (part == "..")
     {
@@ -146,15 +189,20 @@ bool sanitizeWirePath(std::string_view relative, std::string &out)
       // silently clamping would make "../../etc" resolve to the root.
       return false;
     }
+
     parts.push_back(part);
   }
 
   for (size_t p = 0; p < parts.size(); ++p)
   {
     if (p)
+    {
       out.push_back('/');
+    }
+
     out.append(parts[p]);
   }
+
   return true;
 }
 
@@ -173,10 +221,16 @@ void FdStream::close()
   if (owns_)
   {
     if (read_fd_ >= 0)
+    {
       ::close(read_fd_);
+    }
+
     if (write_fd_ >= 0 && write_fd_ != read_fd_)
+    {
       ::close(write_fd_);
+    }
   }
+
   read_fd_ = -1;
   write_fd_ = -1;
   good_ = false;
@@ -195,9 +249,14 @@ bool FdStream::good() const
 bool FdStream::fill()
 {
   if (head_ < tail_)
+  {
     return true;
+  }
+
   if (read_fd_ < 0)
+  {
     return false;
+  }
 
   head_ = 0;
   tail_ = 0;
@@ -210,13 +269,18 @@ bool FdStream::fill()
       tail_ = static_cast<size_t>(n);
       return true;
     }
+
     if (n == 0)
     {
       good_ = false; // clean EOF: peer hung up
       return false;
     }
+
     if (errno == EINTR && !(interrupt_ && *interrupt_))
+    {
       continue; // a signal is not an error unless it asked us to stop
+    }
+
     good_ = false;
     return false;
   }
@@ -226,15 +290,20 @@ bool FdStream::readExact(void *dst, size_t n)
 {
   auto *out = static_cast<unsigned char *>(dst);
   size_t done = 0;
+
   while (done < n)
   {
     if (head_ >= tail_ && !fill())
+    {
       return false;
+    }
+
     const size_t take = std::min(n - done, tail_ - head_);
     std::memcpy(out + done, buf_.data() + head_, take);
     head_ += take;
     done += take;
   }
+
   return true;
 }
 
@@ -244,24 +313,32 @@ bool FdStream::readLine(std::string &out)
   for (;;)
   {
     if (head_ >= tail_ && !fill())
+    {
       return false;
+    }
 
     for (size_t i = head_; i < tail_; ++i)
     {
       if (buf_[i] != '\n')
+      {
         continue;
+      }
+
       out.append(buf_.data() + head_, i - head_);
       head_ = i + 1;
+
       return true;
     }
 
     out.append(buf_.data() + head_, tail_ - head_);
     head_ = tail_;
+
     if (out.size() > kMaxLine)
     {
       // Overlong line: the peer is broken or hostile. Fail the connection
       // instead of growing the buffer without bound.
       good_ = false;
+
       return false;
     }
   }
@@ -270,17 +347,21 @@ bool FdStream::readLine(std::string &out)
 bool FdStream::writeAll(const void *src, size_t n)
 {
   if (write_fd_ < 0)
+  {
     return false;
+  }
 
   const auto *in = static_cast<const unsigned char *>(src);
   size_t done = 0;
+
   while (done < n)
   {
     // send(MSG_NOSIGNAL) turns a vanished peer into EPIPE instead of a
     // SIGPIPE that would kill the process (and, in the client, strand the
-    // terminal in ncurses mode). Pipes fall back to write(), where the 
+    // terminal in ncurses mode). Pipes fall back to write(), where the
     // daemon relies on its process-wide SIG_IGN.
     ssize_t w = 0;
+
     if (use_send_)
     {
       w = ::send(write_fd_, in + done, n - done, MSG_NOSIGNAL);
@@ -294,16 +375,22 @@ bool FdStream::writeAll(const void *src, size_t n)
     {
       w = ::write(write_fd_, in + done, n - done);
     }
+
     if (w > 0)
     {
       done += static_cast<size_t>(w);
       continue;
     }
+
     if (w < 0 && errno == EINTR && !(interrupt_ && *interrupt_))
+    {
       continue;
+    }
+
     good_ = false;
     return false;
   }
+
   return true;
 }
 
