@@ -21,14 +21,23 @@
 namespace
 {
 
-std::string g_socket_to_unlink;
-
 extern "C" void onSignal(int)
 {
+  // Only async-signal-safe work belongs in a handler. The blocking accept()
+  // or read() this interrupts sees EINTR and the loops notice g_stop;
+  // serveUnixSocket unlinks the socket on its way out.
   Server::g_stop = 1;
-  if (!g_socket_to_unlink.empty())
-    ::unlink(g_socket_to_unlink.c_str());
-  // Nothing else here: only async-signal-safe work belongs in a handler.
+}
+
+/// Install without SA_RESTART. std::signal on glibc restarts interrupted
+/// syscalls, so a blocking accept()/read() would never notice g_stop.
+void installStopHandler(int signal_number)
+{
+  struct sigaction action{};
+  action.sa_handler = onSignal;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = 0;
+  ::sigaction(signal_number, &action, nullptr);
 }
 
 void usage()
@@ -105,8 +114,8 @@ int main(int argc, char **argv)
 
   // A client vanishing mid-READ must not kill the daemon.
   std::signal(SIGPIPE, SIG_IGN);
-  std::signal(SIGINT, onSignal);
-  std::signal(SIGTERM, onSignal);
+  installStopHandler(SIGINT);
+  installStopHandler(SIGTERM);
 
   std::error_code ec;
   if (!std::filesystem::is_directory(opts.root, ec))
@@ -126,12 +135,12 @@ int main(int argc, char **argv)
     std::streambuf *saved = std::cout.rdbuf(std::cerr.rdbuf());
 
     Proto::FdStream stream(STDIN_FILENO, STDOUT_FILENO, /*owns=*/false);
+    stream.setInterrupt(&Server::g_stop);
     Server::serveConnection(stream, opts);
 
     std::cout.rdbuf(saved);
     return 0;
   }
 
-  g_socket_to_unlink = socket_path;
   return Server::serveUnixSocket(socket_path, opts) ? 0 : 1;
 }

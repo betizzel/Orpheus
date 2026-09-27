@@ -51,9 +51,8 @@ public:
 
   /**
    * @brief Spawn `ssh [extra_args...] <host> -- <remote_command>` and handshake.
-   * @param extra_args options passed straight to ssh, e.g. {"-p","2222"},
-   *        {"-i","/path/key"} or {"-J","bastion"}. Needed for anything that
-   *        isn't a plain ~/.ssh/config host.
+   * @param extra_args options passed straight to ssh, e.g. {"-p","2222"}, {"-i","/path/key"} or {"-J","bastion"}.
+   *        Needed for anything that isn't a plain ~/.ssh/config host.
    * @return nullptr on failure, with `error` describing why.
    */
   static std::unique_ptr<Session> connectSsh(const std::string &host, const std::string &remote_command,
@@ -93,6 +92,9 @@ private:
   /// Send one request line and read the status line back. Caller holds lock_.
   bool exchange(const std::string &request, std::string &response);
   bool readPayload(const std::string &response, std::vector<unsigned char> &out, bool &had_payload);
+  /// Framing error mid-response: unread bytes are still in the stream, so
+  /// every later reply would be misaligned. Close it and report failure.
+  bool abandon();
 
   mutable std::mutex lock_;
   std::unique_ptr<Proto::Stream> stream_;
@@ -102,12 +104,11 @@ private:
   pid_t child_ = -1; ///< ssh process, reaped in the destructor
 };
 
-/// Opaque per-VFS state; defined in remote.cpp so the free-function
-/// ma_vfs callbacks there can see it.
+/// Virtual File System state
 struct VfsState;
 
 /**
- * @brief A miniaudio VFS whose files live on the far side of a Session.
+ * @brief A miniaudio VFS with all the files on the remote server.
  *
  * Installed as ma_resource_manager_config::pVFS. Because both the native
  * decoders and the FFmpeg backend's stream-based onInit path read through
@@ -127,7 +128,7 @@ public:
 
   static constexpr const char *kScheme = "orpheus://";
   static std::string url(const std::string &wire_path);
-  /// Strip the scheme; returns false when `uri` is not a remote URL.
+  /// returns false when `uri` is not a remote URL.
   static bool parse(const char *uri, std::string &wire_path);
 
 private:

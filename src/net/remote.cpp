@@ -1,4 +1,5 @@
-// remote.cpp — client session over SSH plus the streaming miniaudio VFS.
+// remote.cpp 
+// client session over SSH plus the streaming miniaudio VFS.
 #include "remote.hpp"
 
 #include <algorithm>
@@ -49,7 +50,8 @@ Session::~Session()
 
   if (child_ > 0)
   {
-    // Closing the pipe makes ssh exit; reap it so we never leave a zombie.
+    // Closing the pipe makes ssh exit sp we need to make sure 
+    // we clean it up so it's not a zombie process.
     int status = 0;
     ::waitpid(child_, &status, 0);
     child_ = -1;
@@ -93,11 +95,17 @@ bool Session::readPayload(const std::string &response, std::vector<unsigned char
 
   uint64_t count = 0;
   if (fields.size() < 2 || !parseU64(fields[1], count) || count > Proto::kMaxChunk)
-    return false;
+    return abandon();
 
   had_payload = true;
   out.resize(static_cast<size_t>(count));
   return count == 0 || stream_->readExact(out.data(), out.size());
+}
+
+bool Session::abandon()
+{
+  stream_->close();
+  return false;
 }
 
 bool Session::handshake(std::string &error)
@@ -141,14 +149,18 @@ std::unique_ptr<Session> Session::adopt(std::unique_ptr<Proto::Stream> stream, c
 std::unique_ptr<Session> Session::connectSsh(const std::string &host, const std::string &remote_command,
                                              const std::vector<std::string> &extra_args, std::string &error)
 {
-  // argv is assembled BEFORE fork(): between fork() and exec() in a process
-  // that has other threads (the library scanner does), only async-signal-safe
-  // calls are legal. Allocating there can deadlock on the malloc lock.
+  // argv is assembled BEFORE fork(): 
+  // between fork() and exec() in a process that has other threads 
+  // (the library scanner does), only async-signal-safe calls are legal. 
+  // Allocating there can deadlock on the malloc lock.
+
   std::vector<const char *> argv;
   argv.reserve(extra_args.size() + 5);
   argv.push_back("ssh");
+
   for (const auto &arg : extra_args)
     argv.push_back(arg.c_str());
+
   argv.push_back(host.c_str());
   argv.push_back("--"); // stops ssh parsing the remote command as options
   argv.push_back(remote_command.c_str());
@@ -162,6 +174,8 @@ std::unique_ptr<Session> Session::connectSsh(const std::string &host, const std:
   }
 
   const pid_t pid = ::fork();
+
+  // error case
   if (pid < 0)
   {
     ::close(sockets[0]);
@@ -170,10 +184,10 @@ std::unique_ptr<Session> Session::connectSsh(const std::string &host, const std:
     return nullptr;
   }
 
+  // Child: wire the socket to stdin/stdout and become ssh.
+  // stderr is left alone on purpose so SSH's own prompts and errors reach the user.
   if (pid == 0)
   {
-    // Child: wire the socket to stdin/stdout and become ssh. stderr is left
-    // alone on purpose so SSH's own prompts and errors reach the user.
     ::close(sockets[0]);
     ::dup2(sockets[1], STDIN_FILENO);
     ::dup2(sockets[1], STDOUT_FILENO);
@@ -191,11 +205,12 @@ std::unique_ptr<Session> Session::connectSsh(const std::string &host, const std:
 
   if (!session->handshake(error))
   {
-    // Distinguish "ssh died" from "server misbehaved"; the former is by far
-    // the more common failure and deserves a better message.
+    // Distinguish "ssh died" from "server misbehaved"
+    // WIFEXITED :(
     int status = 0;
     if (::waitpid(pid, &status, WNOHANG) == pid && WIFEXITED(status) && WEXITSTATUS(status) != 0)
       error = "ssh to " + host + " failed (exit " + std::to_string(WEXITSTATUS(status)) + "): " + error;
+
     session->child_ = -1;
     return nullptr;
   }
@@ -214,6 +229,7 @@ std::unique_ptr<Session> Session::connectUnix(const std::filesystem::path &socke
   sockaddr_un addr{};
   addr.sun_family = AF_UNIX;
   const std::string path = socket_path.string();
+
   if (path.size() >= sizeof(addr.sun_path))
   {
     ::close(fd);
@@ -232,8 +248,10 @@ std::unique_ptr<Session> Session::connectUnix(const std::filesystem::path &socke
   std::unique_ptr<Session> session(new Session());
   session->stream_ = std::make_unique<Proto::FdStream>(fd, fd, true);
   session->description_ = "unix://" + path;
+
   if (!session->handshake(error))
     return nullptr;
+
   return session;
 }
 
@@ -252,24 +270,26 @@ bool Session::list(const std::string &path, std::vector<Util::DirEntry> &out)
 
   uint64_t count = 0;
   if (!parseU64(head[1], count))
-    return false;
+    return abandon();
 
   out.reserve(static_cast<size_t>(count));
+
   for (uint64_t i = 0; i < count; ++i)
   {
     std::string row;
     if (!stream_->readLine(row))
       return false;
+
     const auto fields = Proto::splitFields(row, 4);
     if (fields.empty())
-      return false;
+      return abandon();
 
     if (fields[0] == "D" && fields.size() >= 2)
       out.push_back({Proto::decodeField(fields[1]), true});
     else if (fields[0] == "F" && fields.size() >= 4)
       out.push_back({Proto::decodeField(fields[3]), false});
     else
-      return false;
+      return abandon();
   }
   return true;
 }
@@ -291,6 +311,7 @@ bool Session::tags(const std::string &path, SongMetadata &out)
   out.song_name = Proto::decodeField(fields[3]);
   out.artist_name = Proto::decodeField(fields[4]);
   out.album_name = Proto::decodeField(fields[5]);
+
   return true;
 }
 
@@ -304,6 +325,7 @@ bool Session::art(const std::string &path, Art::ImageData &out)
 
   std::vector<unsigned char> payload;
   bool had_payload = false;
+
   if (!readPayload(response, payload, had_payload))
     return false;
   if (!had_payload || payload.empty())
@@ -327,7 +349,7 @@ bool Session::albums(std::vector<AlbumSummary> &out)
 
   uint64_t count = 0;
   if (!parseU64(head[1], count))
-    return false;
+    return abandon();
 
   out.reserve(static_cast<size_t>(count));
   for (uint64_t i = 0; i < count; ++i)
@@ -335,9 +357,10 @@ bool Session::albums(std::vector<AlbumSummary> &out)
     std::string row;
     if (!stream_->readLine(row))
       return false;
+
     const auto fields = Proto::splitFields(row, 7);
     if (fields.size() < 7 || fields[0] != "A")
-      return false;
+      return abandon();
 
     AlbumSummary album;
     album.year = toInt(fields[1]);
@@ -366,7 +389,7 @@ bool Session::albumTracks(int index, std::vector<TrackSummary> &out)
 
   uint64_t count = 0;
   if (!parseU64(head[1], count))
-    return false;
+    return abandon();
 
   out.reserve(static_cast<size_t>(count));
   for (uint64_t i = 0; i < count; ++i)
@@ -376,7 +399,7 @@ bool Session::albumTracks(int index, std::vector<TrackSummary> &out)
       return false;
     const auto fields = Proto::splitFields(row, 6);
     if (fields.size() < 6 || fields[0] != "T")
-      return false;
+      return abandon();
 
     TrackSummary track;
     track.track_number = toInt(fields[1]);
@@ -431,6 +454,7 @@ bool Session::open(const std::string &path, uint32_t &handle, uint64_t &size)
   if (!parseU64(fields[1], id) || !parseU64(fields[2], size))
     return false;
   handle = static_cast<uint32_t>(id);
+
   return true;
 }
 
@@ -440,13 +464,14 @@ bool Session::read(uint32_t handle, uint64_t offset, size_t length, std::vector<
 
   const size_t clamped = std::min(length, Proto::kMaxChunk);
   std::string response;
-  if (!exchange("READ " + std::to_string(handle) + " " + std::to_string(offset) + " " + std::to_string(clamped),
-                response))
+  if (!exchange("READ " + std::to_string(handle) + " " + 
+        std::to_string(offset) + " " + std::to_string(clamped), response))
     return false;
 
   bool had_payload = false;
   if (!readPayload(response, out, had_payload))
     return false;
+
   return had_payload;
 }
 
@@ -470,9 +495,11 @@ bool Vfs::parse(const char *uri, std::string &wire_path)
 {
   if (uri == nullptr)
     return false;
+
   const size_t prefix = std::strlen(kScheme);
   if (std::strncmp(uri, kScheme, prefix) != 0)
     return false;
+
   wire_path = uri + prefix;
   return true;
 }
@@ -577,6 +604,7 @@ ma_result vfsClose(ma_vfs *vfs, ma_vfs_file file)
   RemoteFile *remote = fileOf(file);
   if (remote->session != nullptr)
     remote->session->closeHandle(remote->handle);
+
   {
     std::lock_guard<std::mutex> guard(g_handles_lock);
     g_handles.erase(std::remove(g_handles.begin(), g_handles.end(), remote), g_handles.end());
@@ -647,23 +675,24 @@ ma_result vfsSeek(ma_vfs *vfs, ma_vfs_file file, ma_int64 offset, ma_seek_origin
   ma_int64 target = 0;
   switch (origin)
   {
-  case ma_seek_origin_start:
-    target = offset;
-    break;
-  case ma_seek_origin_current:
-    target = static_cast<ma_int64>(remote->cursor) + offset;
-    break;
-  case ma_seek_origin_end:
-  default:
-    target = static_cast<ma_int64>(remote->size) + offset;
-    break;
+    case ma_seek_origin_start:
+      target = offset;
+      break;
+    case ma_seek_origin_current:
+      target = static_cast<ma_int64>(remote->cursor) + offset;
+      break;
+    case ma_seek_origin_end:
+    default:
+      target = static_cast<ma_int64>(remote->size) + offset;
+      break;
   }
 
   if (target < 0)
     return MA_INVALID_ARGS;
 
-  // Just move the cursor. If the destination is already inside the buffered
-  // window the next read costs nothing; otherwise it refills on demand.
+  // Just move the cursor. 
+  // If the destination is already inside the buffered window the next read costs nothing
+  // else it refills on demand.
   remote->cursor = static_cast<uint64_t>(target);
   return MA_SUCCESS;
 }
@@ -674,6 +703,7 @@ ma_result vfsTell(ma_vfs *vfs, ma_vfs_file file, ma_int64 *pCursor)
     return ma_vfs_tell(reinterpret_cast<ma_vfs *>(&implOf(vfs)->fallback), file, pCursor);
   if (pCursor == nullptr)
     return MA_INVALID_ARGS;
+
   *pCursor = static_cast<ma_int64>(fileOf(file)->cursor);
   return MA_SUCCESS;
 }
@@ -684,6 +714,7 @@ ma_result vfsInfo(ma_vfs *vfs, ma_vfs_file file, ma_file_info *pInfo)
     return ma_vfs_info(reinterpret_cast<ma_vfs *>(&implOf(vfs)->fallback), file, pInfo);
   if (pInfo == nullptr)
     return MA_INVALID_ARGS;
+
   pInfo->sizeInBytes = fileOf(file)->size;
   return MA_SUCCESS;
 }

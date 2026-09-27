@@ -1,5 +1,6 @@
 #include "playlist.hpp"
 
+#include "remote.hpp"
 #include "util.hpp"
 
 #include <algorithm>
@@ -45,6 +46,13 @@ bool startsWithRemoteUrl(std::string_view value)
   return lowered.starts_with("http://") || lowered.starts_with("https://");
 }
 
+/// Tracks queued from a remote source are stored as "orpheus://<wire path>".
+/// They are not filesystem paths: never resolve, absolutise or stat them.
+bool isRemoteTrack(std::string_view value)
+{
+  return value.starts_with(Remote::Vfs::kScheme);
+}
+
 bool parseInteger(std::string_view value, int &result)
 {
   if (value.empty())
@@ -84,7 +92,9 @@ bool addEntry(const std::filesystem::path &base, std::string_view rawPath, std::
   }
 
   Entry entry;
-  if (!resolveEntryPath(base, path, entry.path))
+  if (isRemoteTrack(path))
+    entry.path = path;
+  else if (!resolveEntryPath(base, path, entry.path))
     return false;
   entry.title = std::move(title);
   entry.duration_seconds = duration;
@@ -343,6 +353,11 @@ bool save(const std::filesystem::path &file, const std::vector<Entry> &entries)
   for (const Entry &entry : entries)
   {
     output << "#EXTINF:" << entry.duration_seconds << ',' << entry.title << '\n';
+    if (isRemoteTrack(entry.path))
+    {
+      output << entry.path << '\n';
+      continue;
+    }
     std::error_code pathError;
     const std::filesystem::path absolute = std::filesystem::absolute(entry.path, pathError);
     if (pathError)
@@ -423,6 +438,10 @@ size_t pruneMissing(std::vector<Entry> &entries)
 {
   const auto originalSize = entries.size();
   entries.erase(std::remove_if(entries.begin(), entries.end(), [](const Entry &entry) {
+                 // Remote tracks can only be checked through a live session;
+                 // the caller resolves them against the active source.
+                 if (isRemoteTrack(entry.path))
+                   return false;
                  std::error_code error;
                  const bool present = std::filesystem::exists(entry.path, error);
                  if (error)

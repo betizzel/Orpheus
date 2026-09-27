@@ -17,6 +17,8 @@ album art as coloured ASCII with an FFT equalizer next to it.
 - **Vim-style navigation**: `j k`, `Ctrl-D`/`Ctrl-U`, `g`/`G`, wrap-around
   scrolling, and `/` for a recursive search below the current folder.
 
+- available for Linux & macOS
+
 ## Build dependencies
 
 - C++23 compiler (g++ 13+ / clang 17+)
@@ -100,7 +102,7 @@ Press `6` (or `?`) inside Orpheus for the full list.
 
 ### Building playlists
 
-Playlists are authored entirely in the player; nothing needs to be hand-written.
+Playlists can be made inside the player itself.
 
 - `A` in the Directory, Library, Queue or Home tab opens a picker listing every
   saved playlist plus `[+ new playlist]`. It files whatever is highlighted —
@@ -114,32 +116,32 @@ Playlists are authored entirely in the player; nothing needs to be hand-written.
 
 Saved playlists are plain `EXTM3U` files with absolute paths, so they work with
 mpv, VLC and friends. Any `.m3u`/`.m3u8`/`.pls` found while browsing can be
-queued with `Enter` directly.
+queued with `Enter` directly. Tracks queued from a remote library are saved as
+`orpheus://<path>` lines; they play again whenever Orpheus is attached to a
+server, and are skipped (and reported) in a local session.
 
 ## Remote playback over SSH
 
-Run `orpheusd` where the music lives; run `orpheus` where you want to hear it.
+Orpheus has a daemon called `orpheusd` and you can run it on your remote sever 
+where all your music is.
 
 ```bash
 orpheus --remote nas            # ssh nas orpheusd --stdio
 orpheus --socket /run/orpheusd  # a local daemon over a Unix socket
 ```
 
-**Audio always plays on the machine you are sitting at.** The server never
-decodes anything; it serves directory listings, tags, cover-art bytes and raw
-byte ranges. Because the PCM is local, the ASCII album art and the FFT
-visualizer work exactly as they do for local files.
+You can listen to your music and stream back to your local laptop. 
 
-Transport is `ssh <host> -- orpheusd --stdio`, so there is **no listening
-port, no password, and no TLS to configure**: your existing keys, `~/.ssh/config`
-aliases and agent forwarding all apply. Override the remote side with
-`--remote-cmd` if `orpheusd` is not on the remote `PATH`:
+Transport uses `ssh <host> -- orpheusd --stdio` you just need ssh keys 
+setup for the forwarding. 
+
+Override the remote side with `--remote-cmd` if `orpheusd` is not on the remote `PATH`:
 
 ```bash
 orpheus --remote nas --remote-cmd '/opt/orpheus/bin/orpheusd --stdio --root /srv/music'
 ```
 
-Anything that is not a plain `~/.ssh/config` host needs pass-through options.
+Anything that is not in `~/.ssh/config` needs pass-through options.
 `--ssh-opt` is repeatable and goes straight to `ssh`:
 
 ```bash
@@ -157,24 +159,8 @@ orpheusd --root ~/Music --socket /run/orpheusd
 orpheusd --no-scan                   # skip the startup album index
 ```
 
-The server indexes the library on the machine that owns the disks, so the
-Library tab is populated without the client walking the tree. Album track
+The server indexes the library on the remote server. Album track
 lists are fetched only when you open or queue an album.
-
-**Path safety:** every request is confined to `--root`. Paths are normalised
-(rejecting `..` and absolute paths) and the resolved path is then re-checked
-against the canonical root, so a symlink inside the library that points at
-`/etc` is refused too.
-
-### How streaming works
-
-The client installs a miniaudio VFS backed by the session, so
-`orpheus://<path>` opens go over the wire. Both the native decoders and the
-FFmpeg backend read through the same `ma_read_proc`/`ma_seek_proc` path, which
-means every supported format — including M4A and FLAC — streams and seeks with
-no separate playback path. A 2 MiB read-ahead window keeps the decoder from
-issuing a request per 4 KiB: a 15 MB FLAC plays with ~17 round trips rather
-than several thousand.
 
 ## Configuration
 

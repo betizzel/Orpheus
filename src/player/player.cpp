@@ -182,8 +182,9 @@ void MiniAudioPlayer::rebuildShuffle(int preferred_index)
   shuffle_order.resize(song_queue.size());
   for (size_t i = 0; i < song_queue.size(); ++i)
     shuffle_order[i] = static_cast<int>(i);
-  if (shuffle)
-    std::shuffle(shuffle_order.begin(), shuffle_order.end(), random_engine);
+  if (!shuffle)
+    return; // sequential: position == index, the current track is already in place
+  std::shuffle(shuffle_order.begin(), shuffle_order.end(), random_engine);
   if (preferred_index >= 0 && preferred_index < static_cast<int>(song_queue.size()))
   {
     const auto it = std::find(shuffle_order.begin(), shuffle_order.end(), preferred_index);

@@ -12,6 +12,9 @@
 #include <unordered_map>
 #include <utility>
 
+#include <pthread.h>
+#include <signal.h>
+
 #include <taglib/audioproperties.h>
 #include <taglib/fileref.h>
 #include <taglib/tpropertymap.h>
@@ -324,6 +327,14 @@ void saveCache(const std::unordered_map<std::string, CacheRow> &cache)
     std::filesystem::remove(temporary, ec);
 }
 
+/// Filename part of a '/'-separated path, without building a filesystem::path
+/// (the comparator below runs O(n log n) times per album).
+std::string_view fileNameOf(const std::string &path)
+{
+  const size_t slash = path.rfind('/');
+  return slash == std::string::npos ? std::string_view(path) : std::string_view(path).substr(slash + 1);
+}
+
 void sortAlbums(std::vector<Album> &albums)
 {
   for (Album &album : albums)
@@ -331,8 +342,7 @@ void sortAlbums(std::vector<Album> &albums)
     std::sort(album.tracks.begin(), album.tracks.end(), [](const Track &a, const Track &b) {
       if (a.track_number != b.track_number)
         return a.track_number < b.track_number;
-      return Util::naturalLess(std::filesystem::path(a.path).filename().string(),
-                               std::filesystem::path(b.path).filename().string());
+      return Util::naturalLess(fileNameOf(a.path), fileNameOf(b.path));
     });
   }
   std::sort(albums.begin(), albums.end(), [](const Album &a, const Album &b) {
@@ -408,7 +418,17 @@ void Scanner::start(const std::filesystem::path &root, bool force_rescan)
   std::error_code ec;
   const std::filesystem::path scan_root = std::filesystem::absolute(root, ec).lexically_normal();
   scanning_.store(true, std::memory_order_release);
+
+  // The worker inherits this thread's signal mask. Block everything while it
+  // is spawned so process-directed signals (orpheusd's SIGTERM, the TUI's
+  // SIGWINCH) land on the thread that is waiting for them, not on a scanner
+  // that would swallow the EINTR meant to wake a blocking read.
+  sigset_t all_signals;
+  sigset_t previous;
+  sigfillset(&all_signals);
+  pthread_sigmask(SIG_BLOCK, &all_signals, &previous);
   worker_ = std::thread(&Scanner::scan, this, scan_root, force_rescan);
+  pthread_sigmask(SIG_SETMASK, &previous, nullptr);
 }
 
 void Scanner::cancel()
@@ -507,13 +527,19 @@ void Scanner::scan(const std::filesystem::path &root, bool force_rescan)
     files_total_.store(static_cast<int>(files.size()), std::memory_order_release);
     phase_.store(1, std::memory_order_release);
 
+    // `found` stays in discovery order so `album_index` can point into it.
+    // sorting and copying happen only when a snapshot is published, which is throttled.
+    // Doing both per file made indexing O(n^2) in library size.
     std::vector<Album> found;
-    found.reserve(files.size());
+    std::unordered_map<std::string, size_t> album_index;
     const auto publish = [&]() {
       std::vector<Album> snapshot = found;
+      sortAlbums(snapshot);
       std::lock_guard lock(albums_mutex_);
       albums_ = std::move(snapshot);
     };
+    constexpr auto kPublishInterval = std::chrono::milliseconds(250);
+    auto last_publish = std::chrono::steady_clock::now();
     for (const std::filesystem::path &file : files)
     {
       if (cancel_requested_.load(std::memory_order_acquire))
@@ -538,40 +564,49 @@ void Scanner::scan(const std::filesystem::path &root, bool force_rescan)
           cache[path] = {mtime, size, tags};
       }
 
-      const std::string directory = file.parent_path().string();
-      const std::string album_title = tags.album.empty() ? file.parent_path().filename().string() : tags.album;
-      auto album = std::find_if(found.begin(), found.end(), [&](const Album &candidate) {
-        return candidate.directory == directory && candidate.title == album_title;
-      });
-      if (album == found.end())
+      std::string directory = file.parent_path().string();
+      std::string album_title = tags.album.empty() ? file.parent_path().filename().string() : tags.album;
+      // '\0' cannot appear in a path, so the joined key is unambiguous.
+      std::string key = directory;
+      key.push_back('\0');
+      key += album_title;
+      const auto [slot, inserted] = album_index.try_emplace(std::move(key), found.size());
+      if (inserted)
       {
         // Named fields: a positional list silently breaks whenever Album
         // gains a member (track_count did exactly that).
-        found.push_back({.title = album_title,
-                         .artist = tags.artist,
-                         .directory = directory,
-                         .year = tags.year,
-                         .total_seconds = 0,
-                         .track_count = 0,
-                         .tracks = {}});
-        album = std::prev(found.end());
+        found.push_back({.title = std::move(album_title),
+          .artist = tags.artist,
+          .directory = std::move(directory),
+          .year = tags.year,
+          .total_seconds = 0,
+          .track_count = 0,
+          .tracks = {}});
       }
-      if (album->year == 0 && tags.year != 0)
-        album->year = tags.year;
-      if (album->artist != tags.artist)
-        album->artist = "Various Artists";
-      album->total_seconds += tags.duration_seconds;
-      album->tracks.push_back({path, tags.title, tags.artist, tags.track_number, tags.duration_seconds});
+      Album &album = found[slot->second];
+      if (album.year == 0 && tags.year != 0)
+        album.year = tags.year;
+      if (album.artist != tags.artist)
+        album.artist = "Various Artists";
+      album.total_seconds += tags.duration_seconds;
+      album.tracks.push_back({path, tags.title, tags.artist, tags.track_number, tags.duration_seconds});
       ++files_scanned_;
 
-      sortAlbums(found);
-      publish();
+      const auto now = std::chrono::steady_clock::now();
+      if (now - last_publish >= kPublishInterval)
+      {
+        publish();
+        last_publish = now;
+      }
     }
 
     if (!cancel_requested_.load(std::memory_order_acquire))
     {
       sortAlbums(found);
-      publish();
+      {
+        std::lock_guard lock(albums_mutex_);
+        albums_ = std::move(found); // last snapshot: no copy needed
+      }
       saveCache(cache);
     }
   }

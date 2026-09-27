@@ -32,7 +32,9 @@ endif()
 pkg_check_modules(TAGLIB REQUIRED IMPORTED_TARGET taglib)
 pkg_check_modules(LUA IMPORTED_TARGET lua)
 if(NOT LUA_FOUND)
-    pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua5.4 lua-5.4 lua5.3 lua-5.3)
+    # pkg_search_module takes the FIRST match; pkg_check_modules would demand
+    # every listed module (Debian/Ubuntu ship lua5.4.pc but no lua.pc).
+    pkg_search_module(LUA REQUIRED IMPORTED_TARGET lua5.4 lua-5.4 lua54 lua5.3 lua-5.3 lua53)
 endif()
 
 # Optional FFmpeg for AAC/ALAC/M4A/Opus/OGG/WMA

@@ -80,12 +80,11 @@ bool sendData(Proto::Stream &stream, const void *bytes, size_t count)
 }
 
 /**
- * @brief Resolve a wire path against the root, refusing anything that escapes.
+ * @brief Resolve a wire path against the root
  *
  * Two checks, both required. sanitizeWirePath() rejects "..", absolute paths
- * and NULs lexically; weakly_canonical() then resolves symlinks so a link
- * *inside* the library pointing at /etc cannot be followed. Dropping the
- * second check is the classic way these servers get owned.
+ * and NULs lexically and weakly_canonical() then resolves symlinks so a link
+ * *inside* the library pointing at /etc cannot be followed. 
  */
 bool resolve(const Options &opts, std::string_view wire, std::filesystem::path &out)
 {
@@ -103,8 +102,6 @@ bool resolve(const Options &opts, std::string_view wire, std::filesystem::path &
   if (ec)
     return false;
 
-  // Compare component-wise: a string prefix test would let "/musicked" pass
-  // for root "/music".
   auto root_it = canonical_root.begin();
   auto real_it = real.begin();
   for (; root_it != canonical_root.end(); ++root_it, ++real_it)
@@ -130,8 +127,9 @@ std::string toWire(const Options &opts, const std::filesystem::path &absolute)
 }
 
 /// Raw encoded cover bytes: embedded picture first, then a sibling image file.
-/// Deliberately NOT Library::loadCoverArt, which returns decoded RGBA and
-/// would put ~50x more bytes on the wire than the original JPEG.
+/// we don't expand it to the decoded RGBA because it's a lot more data to send.
+/// Images over Proto::kMaxChunk are reported as absent: no DATA frame may be
+/// larger (see proto.hpp), and it bounds what one request pulls into memory.
 bool coverBytes(const std::filesystem::path &song, std::vector<unsigned char> &out)
 {
   out.clear();
@@ -146,10 +144,15 @@ bool coverBytes(const std::filesystem::path &song, std::vector<unsigned char> &o
       const auto it = picture.find("data");
       if (it != picture.end() && it->second.type() == TagLib::Variant::ByteVector)
       {
+        // An oversized embedded picture falls through to the sibling file,
+        // which is often a smaller copy of the same cover.
         const TagLib::ByteVector bytes = it->second.value<TagLib::ByteVector>();
-        const auto *raw = reinterpret_cast<const unsigned char *>(bytes.data());
-        out.assign(raw, raw + bytes.size());
-        return !out.empty();
+        if (!bytes.isEmpty() && bytes.size() <= Proto::kMaxChunk)
+        {
+          const auto *raw = reinterpret_cast<const unsigned char *>(bytes.data());
+          out.assign(raw, raw + bytes.size());
+          return true;
+        }
       }
     }
   }
@@ -162,7 +165,7 @@ bool coverBytes(const std::filesystem::path &song, std::vector<unsigned char> &o
   if (!file)
     return false;
   const std::streamsize size = file.tellg();
-  if (size <= 0)
+  if (size <= 0 || static_cast<uintmax_t>(size) > Proto::kMaxChunk)
     return false;
   file.seekg(0);
   out.resize(static_cast<size_t>(size));
@@ -220,8 +223,8 @@ bool handleTags(Proto::Stream &stream, const Options &opts, std::string_view arg
   // (including the file-stem fallback for untagged files).
   const SongMetadata meta = Library::loadSongMetadata(file.string(), false);
   return sendLine(stream, "OK " + std::to_string(meta.duration_seconds) + " " +
-                              std::to_string(meta.track_number) + " " + Proto::encodeField(meta.song_name) + " " +
-                              Proto::encodeField(meta.artist_name) + " " + Proto::encodeField(meta.album_name));
+    std::to_string(meta.track_number) + " " + Proto::encodeField(meta.song_name) + " " +
+    Proto::encodeField(meta.artist_name) + " " + Proto::encodeField(meta.album_name));
 }
 
 bool handleArt(Proto::Stream &stream, const Options &opts, std::string_view arg)
@@ -245,9 +248,9 @@ bool handleAlbums(Proto::Stream &stream, const Options &opts, Library::Scanner &
   for (const auto &album : conn.album_snapshot)
   {
     if (!sendLine(stream, "A " + std::to_string(album.year) + " " + std::to_string(album.tracks.size()) + " " +
-                              std::to_string(album.total_seconds) + " " + Proto::encodeField(album.artist) + " " +
-                              Proto::encodeField(album.title) + " " +
-                              Proto::encodeField(toWire(opts, album.directory))))
+      std::to_string(album.total_seconds) + " " + Proto::encodeField(album.artist) + " " +
+      Proto::encodeField(album.title) + " " +
+      Proto::encodeField(toWire(opts, album.directory))))
       return false;
   }
   return true;
@@ -267,8 +270,8 @@ bool handleAlbum(Proto::Stream &stream, const Options &opts, ConnState &conn, st
   {
     // Scanner tracks carry absolute paths; clients only ever see wire paths.
     if (!sendLine(stream, "T " + std::to_string(track.track_number) + " " +
-                              std::to_string(track.duration_seconds) + " " + Proto::encodeField(track.title) + " " +
-                              Proto::encodeField(track.artist) + " " + Proto::encodeField(toWire(opts, track.path))))
+      std::to_string(track.duration_seconds) + " " + Proto::encodeField(track.title) + " " +
+      Proto::encodeField(track.artist) + " " + Proto::encodeField(toWire(opts, track.path))))
       return false;
   }
   return true;
@@ -334,8 +337,8 @@ bool handleRead(Proto::Stream &stream, ConnState &conn, const std::vector<std::s
 bool handleStatus(Proto::Stream &stream, Library::Scanner &scanner)
 {
   return sendLine(stream, "OK " + std::string(scanner.isScanning() ? "1" : "0") + " " +
-                              std::to_string(scanner.filesScanned()) + " " + std::to_string(scanner.filesTotal()) +
-                              " " + std::to_string(scanner.albumCount()));
+    std::to_string(scanner.filesScanned()) + " " + std::to_string(scanner.filesTotal()) +
+    " " + std::to_string(scanner.albumCount()));
 }
 
 } // namespace
@@ -348,7 +351,9 @@ bool serveConnection(Proto::Stream &stream, const Options &opts)
     scanner.start(opts.root);
 
   std::string line;
-  while (stream.readLine(line))
+  // g_stop is only ever set by orpheusd's SIGINT/SIGTERM handler
+  // a signal that lands mid-request is noticed before blocking on the next one.
+  while (!g_stop && stream.readLine(line))
   {
     const auto fields = Proto::splitFields(line);
     if (fields.empty())
@@ -469,6 +474,7 @@ bool serveUnixSocket(const std::filesystem::path &socket_path, const Options &op
     }
 
     Proto::FdStream stream(client, client, true);
+    stream.setInterrupt(&g_stop);
     serveConnection(stream, opts);
   }
 

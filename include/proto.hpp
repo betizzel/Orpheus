@@ -1,50 +1,60 @@
-// proto.hpp — the Orpheus remote protocol.
+// proto.hpp:
+// the Orpheus remote protocol.
 //
 // A client (the TUI) drives a server (orpheusd) that lives wherever the music
-// files are. The server never decodes or plays anything: it serves directory
-// listings, tags, cover art and raw byte ranges. Audio is decoded and played
-// on the client, so the album art renderer and the FFT visualizer keep working
-// on local PCM exactly as they do for local files.
+// files are.
 //
-// TRANSPORT
-// The canonical transport is `ssh <host> orpheusd --stdio`: the server speaks
-// the protocol on stdin/stdout of a process SSH spawned for us. That means no
-// listening port, no authentication to invent, no TLS, and the user's existing
-// keys and ~/.ssh/config apply unchanged. A Unix socket (`--socket <path>`) is
+// The server never decodes or plays anything:
+// it serves directory listings, tags, cover art and raw byte ranges.
+// Audio is decoded and played on the client, so the album art renderer
+// and the FFT visualizer keep working on local PCM exactly as they do for
+// local files.
+//
+// TRANSPORT:
+// Tansport is `ssh <host> orpheusd --stdio`: the server speaks the protocol on 
+// stdin/stdout of a process SSH spawned for us. A Unix socket (`--socket <path>`) is
 // supported for the same-machine case.
 //
-// IMPORTANT: orpheusd MUST NOT write anything to stdout that is not protocol
-// traffic. Util::debugPrint and friends write to stdout, so the server has to
+// IMPORTANT:
+// orpheusd does not write anything to stdout that is not protocol
+// traffic. Util::debugPrint write to stdout, so the server has to
 // redirect them (to stderr or a log) before serving on --stdio.
 //
-// FRAMING
+// FRAMING:
 // Requests and responses are single '\n'-terminated ASCII lines of
 // space-separated fields. Free-text fields (file names, tag values) are
-// percent-encoded with encodeField() so a name can never contain a space,
-// CR, LF or '%' on the wire.
+// percent-encoded with encodeField() so a name can never contain whitespace.
 //
 //   request    "<VERB>[ <field>...]\n"
 //   response   "OK[ <field>...]\n"  |  "ERR <encoded-message>\n"
 //
-// Bulk binary payloads are introduced by their own response line and are NOT
-// newline terminated:
+// Bulk binary payloads are introduced by their own response line and aren't
+// terminated with a newline:
 //
 //   "DATA <nbytes>\n" followed by exactly <nbytes> raw octets
+//
+// - <nbytes> never exceeds kMaxChunk.
+//
+// A receiver MUST treat a larger count as a fatal framing error and drop the
+// connection
+//  - the payload is still in the stream, so skipping the response would
+//    desynchronise every reply after.
 //
 // Row responses answer "OK <count>\n" and then emit exactly <count> further
 // lines, each in the shape documented per verb below.
 //
 // The protocol is strictly request/response and single-threaded per
-// connection: the client sends one request and reads its complete response
-// (including any payload) before sending the next.
+// connection.
+// - the client sends one request and reads its complete response
+//   (including any payload) before sending the next.
 //
-// PATHS
-// Every path on the wire is RELATIVE to the server's music root and uses '/'
-// separators. The server MUST reject any path that escapes the root once
+// PATHS:
+// Every path on is relative to the server's music root and uses '/'
+// separators. The server must reject any path that escapes the root once
 // lexically normalised (a "..", an absolute path, or a symlink pointing out).
 // The empty string denotes the root itself.
 //
-// VERBS
+// VERBS:
 //   HELLO <version>
 //     -> OK <version> <encoded-root-label>
 //     Version mismatch is a hard ERR; there is no negotiation yet.
@@ -64,7 +74,7 @@
 //
 //   ART <path>
 //     -> DATA <nbytes>   embedded picture, else a sibling cover image
-//     -> OK 0            nothing found
+//     -> OK 0            nothing found, or the image is larger than kMaxChunk
 //
 //   ALBUMS
 //     -> OK <count>, then <count> rows:
@@ -102,6 +112,7 @@
 
 #pragma once
 
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -111,22 +122,22 @@
 namespace Proto
 {
 
-/// Bumped on any incompatible wire change. HELLO fails across versions.
+/// version of our protocol
 inline constexpr int kVersion = 1;
 
 /// Longest accepted protocol line, payloads excluded.
 inline constexpr size_t kMaxLine = 16 * 1024;
 
-/// Largest single READ. Bounds the server's scratch buffer.
+/// Largest DATA payload:
+/// bounds a single read, a cover image, and the server's scratch buffer.
 inline constexpr size_t kMaxChunk = 1u << 20; // 1 MiB
 
 /// Default read-ahead the client keeps in front of the decoder.
 inline constexpr size_t kReadAhead = 2u << 20; // 2 MiB
 
 /**
- * @brief Byte transport underneath the protocol: an SSH pipe pair, a Unix
- * socket, or a plain fd pair. All calls are blocking.
- */
+ * @brief Byte transport stream 
+ **/
 class Stream
 {
 public:
@@ -157,7 +168,7 @@ std::string decodeField(std::string_view wire);
 
 /**
  * @brief Split a protocol line into at most `max_fields` space-separated
- * fields. Fields are returned still encoded; run decodeField() on the ones
+ * fields. Fields are returned encoded and needs decodeField() on the ones
  * that are free text.
  */
 std::vector<std::string_view> splitFields(std::string_view line, size_t max_fields = 16);
@@ -191,6 +202,14 @@ public:
   bool good() const override;
   void close() override;
 
+  /**
+   * @brief Give blocking I/O a way to interrupt
+   * when a signal interrupts a read or write (EINTR)
+   * and `*flag` is set, the call fails instead of retrying.
+   * Only takes effect for handlers installed without SA_RESTART.
+   */
+  void setInterrupt(const volatile std::sig_atomic_t *flag);
+
 private:
   bool fill();
 
@@ -198,6 +217,8 @@ private:
   int write_fd_;
   bool owns_;
   bool good_ = true;
+  bool use_send_ = true; // send(MSG_NOSIGNAL) until the fd proves not to be a socket
+  const volatile std::sig_atomic_t *interrupt_ = nullptr;
   std::vector<char> buf_;
   size_t head_ = 0;
   size_t tail_ = 0;

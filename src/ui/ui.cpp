@@ -478,12 +478,16 @@ void UIManager::enqueuePath(const std::string &path, bool recursive, std::vector
   const std::string name = state.source->baseName(path);
   if (Util::isPlaylistFile(name))
   {
-    // Playlists are read on the client even for a remote source: their
-    // entries are absolute local paths, which only make sense here.
+    // The playlist file itself is read on the client. Local entries are
+    // absolute paths here; "orpheus://" entries resolve through the source.
     std::vector<Playlist::Entry> entries;
     if (Playlist::load(path, entries))
       for (const auto &entry : entries)
-        out.push_back(Library::loadSongMetadata(entry.path, false));
+      {
+        SongMetadata song;
+        if (playlistEntrySong(entry, song))
+          out.push_back(std::move(song));
+      }
     return;
   }
 
@@ -639,15 +643,36 @@ void UIManager::playPlaylist(const std::string &name, bool replace_queue)
     return;
   }
 
-  const size_t missing = Playlist::pruneMissing(entries);
+  size_t missing = Playlist::pruneMissing(entries);
   std::vector<SongMetadata> songs;
   songs.reserve(entries.size());
   for (const auto &entry : entries)
-    songs.push_back(Library::loadSongMetadata(entry.path, false));
+  {
+    SongMetadata song;
+    if (playlistEntrySong(entry, song))
+      songs.push_back(std::move(song));
+    else
+      ++missing;
+  }
 
   startQueued(std::move(songs), replace_queue);
   if (missing > 0)
-    setStatus(std::to_string(missing) + " missing file(s) skipped in " + name);
+    setStatus(std::to_string(missing) + " unavailable track(s) skipped in " + name);
+}
+
+bool UIManager::playlistEntrySong(const Playlist::Entry &entry, SongMetadata &out)
+{
+  std::string wire;
+  if (!Remote::Vfs::parse(entry.path.c_str(), wire))
+  {
+    out = Library::loadSongMetadata(entry.path, false);
+    return true;
+  }
+  // Saved from a remote queue: only playable while attached to a server.
+  if (!state.source->isRemote())
+    return false;
+  out = state.source->metadata(wire);
+  return true;
 }
 
 void UIManager::savePlaylistFromQueue(const std::string &name)
@@ -1018,7 +1043,9 @@ void UIManager::libraryScreen()
 {
   const Source::ScanState scan = state.source->scanState();
   const size_t scanned_albums = static_cast<size_t>(scan.albums);
-  if (state.library_dirty || scanned_albums != state.last_album_count)
+  const bool scan_finished = state.last_scanning && !scan.scanning;
+  state.last_scanning = scan.scanning;
+  if (state.library_dirty || scan_finished || scanned_albums != state.last_album_count)
   {
     state.source->albums(state.albums);
     state.last_album_count = scanned_albums;

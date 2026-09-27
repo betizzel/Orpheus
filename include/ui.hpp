@@ -140,6 +140,8 @@ struct UI
   ListView library;
   bool library_dirty = true;
   size_t last_album_count = 0;
+  /// Scanning flag as of the last library render
+  bool last_scanning = false;
 
   // queue
   ListView queue;
@@ -245,6 +247,9 @@ private:
   void refreshPlaylists();
   void loadPlaylistPreview();
   void playPlaylist(const std::string &name, bool replace_queue);
+  /// Queue entry for a playlist line, false when it names a remote track
+  /// that the active source cannot serve.
+  bool playlistEntrySong(const Playlist::Entry &entry, SongMetadata &out);
   void savePlaylistFromQueue(const std::string &name);
   bool createPlaylist(const std::string &name);
   void beginAddToPlaylist(std::vector<SongMetadata> songs);

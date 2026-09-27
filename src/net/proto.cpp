@@ -1,9 +1,10 @@
-// proto.cpp — framing primitives shared by the client and orpheusd.
+// proto.cpp
 #include "proto.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <sys/socket.h>
 #include <unistd.h>
 
 namespace Proto
@@ -17,10 +18,11 @@ constexpr size_t kBufSize = 64 * 1024;
 inline bool needsEscape(unsigned char c)
 {
   // Space separates fields, '%' introduces an escape, CR/LF end a line, and
-  // control bytes have no business on the wire.
+  // control bytes are discarded.
   return c == ' ' || c == '%' || c < 0x21 || c == 0x7F;
 }
 
+// hex->int
 inline int hexValue(char c)
 {
   if (c >= '0' && c <= '9')
@@ -55,7 +57,7 @@ std::string encodeField(std::string_view raw)
     }
   }
 
-  // An empty field would vanish into the space separator; give it a body.
+  // An empty field would vanish into the space separator if not treated correctly.
   if (out.empty())
     out = "%00";
   return out;
@@ -63,6 +65,7 @@ std::string encodeField(std::string_view raw)
 
 std::string decodeField(std::string_view wire)
 {
+  // empty field
   if (wire == "%00")
     return {};
 
@@ -124,15 +127,19 @@ bool sanitizeWirePath(std::string_view relative, std::string &out)
   {
     while (i < relative.size() && relative[i] == '/')
       ++i;
+
     const size_t start = i;
+
     while (i < relative.size() && relative[i] != '/')
       ++i;
+
     if (i == start)
       break;
 
     const std::string_view part = relative.substr(start, i - start);
     if (part == ".")
       continue;
+
     if (part == "..")
     {
       // Refuse rather than popping: a client has no business walking up, and
@@ -175,6 +182,11 @@ void FdStream::close()
   good_ = false;
 }
 
+void FdStream::setInterrupt(const volatile std::sig_atomic_t *flag)
+{
+  interrupt_ = flag;
+}
+
 bool FdStream::good() const
 {
   return good_;
@@ -189,6 +201,7 @@ bool FdStream::fill()
 
   head_ = 0;
   tail_ = 0;
+
   for (;;)
   {
     const ssize_t n = ::read(read_fd_, buf_.data(), buf_.size());
@@ -202,8 +215,8 @@ bool FdStream::fill()
       good_ = false; // clean EOF: peer hung up
       return false;
     }
-    if (errno == EINTR)
-      continue; // a signal is not an error
+    if (errno == EINTR && !(interrupt_ && *interrupt_))
+      continue; // a signal is not an error unless it asked us to stop
     good_ = false;
     return false;
   }
@@ -263,13 +276,30 @@ bool FdStream::writeAll(const void *src, size_t n)
   size_t done = 0;
   while (done < n)
   {
-    const ssize_t w = ::write(write_fd_, in + done, n - done);
+    // send(MSG_NOSIGNAL) turns a vanished peer into EPIPE instead of a
+    // SIGPIPE that would kill the process (and, in the client, strand the
+    // terminal in ncurses mode). Pipes fall back to write(), where the 
+    // daemon relies on its process-wide SIG_IGN.
+    ssize_t w = 0;
+    if (use_send_)
+    {
+      w = ::send(write_fd_, in + done, n - done, MSG_NOSIGNAL);
+      if (w < 0 && errno == ENOTSOCK)
+      {
+        use_send_ = false;
+        continue;
+      }
+    }
+    else
+    {
+      w = ::write(write_fd_, in + done, n - done);
+    }
     if (w > 0)
     {
       done += static_cast<size_t>(w);
       continue;
     }
-    if (w < 0 && errno == EINTR)
+    if (w < 0 && errno == EINTR && !(interrupt_ && *interrupt_))
       continue;
     good_ = false;
     return false;
